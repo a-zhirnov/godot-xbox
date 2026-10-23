@@ -212,6 +212,7 @@ void DisplayServerUWP::_handle_event(const uwp::Event &p_event) {
 
 		case uwp::EventType::FOCUS:
 			focused = p_event.a != 0;
+			print_verbose(vformat("UWP: window focus %s", focused ? "in" : "out"));
 			_send_window_event(focused ? DisplayServerEnums::WINDOW_EVENT_FOCUS_IN : DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT);
 			break;
 
@@ -246,6 +247,7 @@ void DisplayServerUWP::_process_gamepads() {
 
 		if (cur.connected != prev.connected) {
 			if (cur.connected) {
+				print_verbose(vformat("UWP: gamepad %d connected", i));
 				input->joy_connection_changed(i, true, "Xbox Controller", UWP_GAMEPAD_GUID);
 			} else {
 				input->joy_connection_changed(i, false, "");
@@ -260,6 +262,9 @@ void DisplayServerUWP::_process_gamepads() {
 			const bool was = (prev.buttons & m.uwp_button) != 0 && prev.connected;
 			const bool is = (cur.buttons & m.uwp_button) != 0;
 			if (was != is || !prev.connected) {
+				if (was != is) {
+					print_verbose(vformat("UWP: gamepad %d button %d %s", i, (int)m.button, is ? "down" : "up"));
+				}
 				input->joy_button(i, m.button, is);
 			}
 		}

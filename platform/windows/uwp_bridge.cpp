@@ -177,6 +177,15 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 		_diag("App::SetWindow");
 		g_window = p_window;
 
+		// On Xbox the B button raises a system "back" request; if nobody handles it the shell
+		// closes the app. The game handles B itself, so always claim the request.
+		try {
+			SystemNavigationManager::GetForCurrentView().BackRequested([](auto const &, BackRequestedEventArgs const &a) {
+				a.Handled(true);
+			});
+		} catch (...) {
+		}
+
 		p_window.PointerPressed([](CoreWindow const &, PointerEventArgs const &a) { _push_pointer(uwp::EventType::POINTER_DOWN, a); });
 		p_window.PointerReleased([](CoreWindow const &, PointerEventArgs const &a) { _push_pointer(uwp::EventType::POINTER_UP, a); });
 		p_window.PointerMoved([](CoreWindow const &, PointerEventArgs const &a) { _push_pointer(uwp::EventType::POINTER_MOVE, a); });
