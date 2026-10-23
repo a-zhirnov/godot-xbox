@@ -216,6 +216,9 @@ void DisplayServerUWP::_handle_event(const uwp::Event &p_event) {
 			break;
 
 		case uwp::EventType::FOCUS:
+			if ((p_event.a != 0) == focused) {
+				break; // Visibility and activation both report "in"; send each change once.
+			}
 			focused = p_event.a != 0;
 			print_verbose(vformat("UWP: window focus %s", focused ? "in" : "out"));
 			_send_window_event(focused ? DisplayServerEnums::WINDOW_EVENT_FOCUS_IN : DisplayServerEnums::WINDOW_EVENT_FOCUS_OUT);

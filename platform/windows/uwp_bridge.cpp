@@ -226,10 +226,21 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 			e.a = (int32_t)a.KeyCode();
 			_push(e);
 		});
+		// Focus follows visibility, not activation: on Xbox the shell deactivates the window for
+		// overlays and screen dimming and does not always re-activate it, which left the engine
+		// ignoring the gamepad. Activation only ever brings focus back.
 		p_window.Activated([](CoreWindow const &, WindowActivatedEventArgs const &a) {
+			if (a.WindowActivationState() != CoreWindowActivationState::Deactivated) {
+				uwp::Event e;
+				e.type = uwp::EventType::FOCUS;
+				e.a = 1;
+				_push(e);
+			}
+		});
+		p_window.VisibilityChanged([](CoreWindow const &, VisibilityChangedEventArgs const &a) {
 			uwp::Event e;
 			e.type = uwp::EventType::FOCUS;
-			e.a = a.WindowActivationState() != CoreWindowActivationState::Deactivated ? 1 : 0;
+			e.a = a.Visible() ? 1 : 0;
 			_push(e);
 		});
 		p_window.SizeChanged([](CoreWindow const &, WindowSizeChangedEventArgs const &a) {
