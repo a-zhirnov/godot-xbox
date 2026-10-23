@@ -180,6 +180,8 @@ void _push_pointer(uwp::EventType p_type, PointerEventArgs const &p_args) {
 	_push(e);
 }
 
+bool g_window_activated = false;
+
 struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 	IFrameworkView CreateView() {
 		return *this;
@@ -188,7 +190,11 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 	void Initialize(CoreApplicationView const &p_view) {
 		_diag("App::Initialize");
 		p_view.Activated([](CoreApplicationView const &, auto const &) {
-			CoreWindow::GetForCurrentThread().Activate();
+			// The first activation waits for the engine's boot splash (activate_window()); later
+			// ones (protocol launches while running) bring the window back right away.
+			if (g_window_activated) {
+				CoreWindow::GetForCurrentThread().Activate();
+			}
 		});
 	}
 
@@ -282,8 +288,6 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 			g_local_dir = std::wstring(Windows::Storage::ApplicationData::Current().LocalFolder().Path().c_str()) + L"\\";
 		} catch (...) {
 		}
-
-		g_window.Activate();
 
 		// Draw edge-to-edge on TVs instead of keeping the title-safe margins.
 		try {
@@ -428,6 +432,16 @@ void pick_file() {
 const wchar_t *picked_path() {
 	std::lock_guard<std::mutex> guard(g_events_lock);
 	return g_picked.c_str();
+}
+
+void activate_window() {
+	if (g_window_activated) {
+		return;
+	}
+	g_window_activated = true;
+	_diag("activate_window");
+	g_window.Activate();
+	g_window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
 }
 
 bool launch_uri(const wchar_t *p_uri) {

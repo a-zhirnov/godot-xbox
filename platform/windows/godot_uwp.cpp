@@ -128,6 +128,8 @@ static int godot_uwp_main() {
 		return err == ERR_HELP ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
 	boot_log("Main::setup ok, calling Main::start");
+	// The boot splash has been drawn by now: let the system splash go (same picture, no black gap).
+	uwp::activate_window();
 
 	if (Main::start() == EXIT_SUCCESS) {
 		boot_log("Main::start ok, running");
