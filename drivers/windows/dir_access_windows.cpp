@@ -186,6 +186,29 @@ Error DirAccessWindows::change_dir(String p_dir) {
 
 	String dir = fix_path(p_dir);
 
+#ifdef UWP_ENABLED
+	// The process working directory can't point at brokered locations (USB drives, picked
+	// folders), so resolve the path and check it directly instead of via SetCurrentDirectory.
+	{
+		String target = dir.trim_prefix(R"(\\?\)").replace_char('\\', '/');
+		if (target.is_relative_path()) {
+			target = current_dir.trim_prefix(R"(\\?\)").replace_char('\\', '/').path_join(target);
+		}
+		target = target.simplify_path();
+		const String native = target.replace_char('/', '\\');
+		const DWORD attributes = GetFileAttributesW((LPCWSTR)(native.utf16().get_data()));
+		if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+			return ERR_INVALID_PARAMETER;
+		}
+		const String base = _get_root_path();
+		if (!base.is_empty() && !target.begins_with(base)) {
+			return ERR_INVALID_PARAMETER;
+		}
+		current_dir = native;
+		return OK;
+	}
+#endif
+
 	Char16String real_current_dir_name;
 	size_t str_len = GetCurrentDirectoryW(0, nullptr);
 	real_current_dir_name.resize_uninitialized(str_len + 1);

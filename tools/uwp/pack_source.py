@@ -17,6 +17,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKIP_DIRS = {".git", ".godot/editor", ".godot/shader_cache", "addons/AynThor/bin", "android"}
 SKIP_FILES = {"gdre_export.log", "export_presets.cfg", ".gitignore", ".gitattributes"}
 ANDROID_EXTENSIONS = ("res://addons/AynThor/AynThor.gdextension",)
+# .godot folders holding earlier import results (the recovery's own cache, the decrypted APK).
+FALLBACK_IMPORT_DIRS = [
+    os.path.expanduser("~/Downloads/backups/socket-game-godot-cache-20261023"),
+    os.path.expanduser("~/Downloads/socket_0.3.2_out/godot_project/.godot"),
+]
 
 
 def main() -> int:
@@ -45,7 +50,28 @@ def main() -> int:
             else:
                 os.link(os.path.join(root, name), dst) if os.stat(root).st_dev == os.stat(stage).st_dev else open(dst, "wb").write(open(os.path.join(root, name), "rb").read())
             kept += 1
-    print(f"staged {kept} files")
+    # Imports that can't be redone from the recovered sources (e.g. FBX models, whose sources
+    # GDRE can't restore) still have their original output: take it from the fallback caches.
+    restored = 0
+    for root, _, names in os.walk(src):
+        for name in names:
+            if not name.endswith(".import"):
+                continue
+            for line in open(os.path.join(root, name), encoding="utf-8", errors="replace"):
+                if not line.startswith(("path=", "path.")) or "res://.godot/imported/" not in line:
+                    continue
+                rel = line.split('"')[1].replace("res://", "")
+                dst = os.path.join(stage, rel)
+                if os.path.exists(dst):
+                    continue
+                for fallback in FALLBACK_IMPORT_DIRS:
+                    candidate = os.path.join(fallback, rel.replace(".godot/", "", 1))
+                    if os.path.exists(candidate):
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        open(dst, "wb").write(open(candidate, "rb").read())
+                        restored += 1
+                        break
+    print(f"staged {kept} files, restored {restored} imported files from fallback caches")
     return subprocess.call([sys.executable, "-I", os.path.join(HERE, "pack_game.py"), stage, out])
 
 
