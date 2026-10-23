@@ -194,6 +194,34 @@ bool LibretroD3D11::read_frame(unsigned p_width, unsigned p_height, PackedByteAr
 
 namespace {
 
+// Plain access first (the app's own folders, the package), the broker only when that is refused:
+// brokered calls reject some flags (.NET's SECURITY_SQOS_PRESENT) even on paths the app owns.
+HANDLE WINAPI redirected_CreateFileW(LPCWSTR p_name, DWORD p_access, DWORD p_share, LPSECURITY_ATTRIBUTES p_security, DWORD p_disposition, DWORD p_flags, HANDLE p_template) {
+	CREATEFILE2_EXTENDED_PARAMETERS params = {};
+	params.dwSize = sizeof(params);
+	params.dwFileAttributes = p_flags & 0x0000FFFF;
+	params.dwFileFlags = p_flags & 0xFFF00000;
+	params.dwSecurityQosFlags = p_flags & 0x000F0000;
+	params.lpSecurityAttributes = p_security;
+	params.hTemplateFile = p_template;
+	HANDLE handle = CreateFile2(p_name, p_access, p_share, p_disposition, &params);
+	if (handle != INVALID_HANDLE_VALUE) {
+		return handle;
+	}
+	const DWORD plain_error = GetLastError();
+	if (plain_error == ERROR_FILE_NOT_FOUND || plain_error == ERROR_PATH_NOT_FOUND || plain_error == ERROR_FILE_EXISTS) {
+		return handle;
+	}
+	params.dwSecurityQosFlags = 0;
+	handle = CreateFile2FromAppW(p_name, p_access, p_share, p_disposition, &params);
+	if (handle == INVALID_HANDLE_VALUE) {
+		const DWORD error = GetLastError();
+		print_line(vformat("uwp-redirect: CreateFileW(%s) failed: plain %d, brokered %d", String(p_name), (int)plain_error, (int)error));
+		SetLastError(error);
+	}
+	return handle;
+}
+
 HANDLE WINAPI redirected_FindFirstFileW(LPCWSTR p_name, LPWIN32_FIND_DATAW r_data) {
 	return FindFirstFileExFromAppW(p_name, FindExInfoStandard, r_data, FindExSearchNameMatch, nullptr, 0);
 }
@@ -233,12 +261,19 @@ DWORD without_execute(DWORD p_protect) {
 LPVOID WINAPI redirected_VirtualAlloc(LPVOID p_address, SIZE_T p_size, DWORD p_type, DWORD p_protect) {
 	const DWORD plain = without_execute(p_protect);
 	void *memory = VirtualAllocFromApp(p_address, p_size, p_type, plain);
-	if (!memory || plain == p_protect || !(p_type & MEM_COMMIT)) {
+	if (!memory) {
+		const DWORD error = GetLastError();
+		print_line(vformat("uwp-redirect: VirtualAlloc(%x, %d MB, type %x, protect %x) failed: %d", (uint64_t)p_address, (int64_t)(p_size >> 20), (int)p_type, (int)p_protect, (int)error));
+		SetLastError(error);
+		return nullptr;
+	}
+	if (plain == p_protect || !(p_type & MEM_COMMIT)) {
 		return memory;
 	}
 	ULONG old = 0;
 	if (!VirtualProtectFromApp(memory, p_size, p_protect, &old)) {
 		const DWORD error = GetLastError();
+		print_line(vformat("uwp-redirect: making %d MB executable (%x) failed: %d", (int64_t)(p_size >> 20), (int)p_protect, (int)error));
 		if (!p_address || (p_type & MEM_RESERVE)) {
 			VirtualFree(memory, 0, MEM_RELEASE);
 		}
@@ -251,6 +286,11 @@ LPVOID WINAPI redirected_VirtualAlloc(LPVOID p_address, SIZE_T p_size, DWORD p_t
 BOOL WINAPI redirected_VirtualProtect(LPVOID p_address, SIZE_T p_size, DWORD p_protect, PDWORD r_old) {
 	ULONG old = 0;
 	const BOOL ok = VirtualProtectFromApp(p_address, p_size, p_protect, &old);
+	if (!ok && p_size >= 1024 * 1024) {
+		const DWORD error = GetLastError();
+		print_line(vformat("uwp-redirect: VirtualProtect(%d MB, %x) failed: %d", (int64_t)(p_size >> 20), (int)p_protect, (int)error));
+		SetLastError(error);
+	}
 	if (r_old) {
 		*r_old = old;
 	}
@@ -260,7 +300,13 @@ BOOL WINAPI redirected_VirtualProtect(LPVOID p_address, SIZE_T p_size, DWORD p_p
 // Sections the JIT maps executable (CreateFileMapping + MapViewOfFile with FILE_MAP_EXECUTE)
 // need the FromApp variants too.
 HANDLE WINAPI redirected_CreateFileMappingW(HANDLE p_file, LPSECURITY_ATTRIBUTES p_security, DWORD p_protect, DWORD p_size_high, DWORD p_size_low, LPCWSTR p_name) {
-	return CreateFileMappingFromApp(p_file, p_security, p_protect, ((ULONG64)p_size_high << 32) | p_size_low, p_name);
+	HANDLE mapping = CreateFileMappingFromApp(p_file, p_security, p_protect, ((ULONG64)p_size_high << 32) | p_size_low, p_name);
+	if (!mapping) {
+		const DWORD error = GetLastError();
+		print_line(vformat("uwp-redirect: CreateFileMapping(%d MB, %x) failed: %d", (int64_t)((((ULONG64)p_size_high << 32) | p_size_low) >> 20), (int)p_protect, (int)error));
+		SetLastError(error);
+	}
+	return mapping;
 }
 
 LPVOID WINAPI redirected_MapViewOfFile(HANDLE p_mapping, DWORD p_access, DWORD p_offset_high, DWORD p_offset_low, SIZE_T p_size) {
@@ -294,7 +340,7 @@ struct Redirect {
 };
 
 const Redirect redirects[] = {
-	{ "CreateFileW", (void *)&CreateFileFromAppW },
+	{ "CreateFileW", (void *)&redirected_CreateFileW },
 	{ "FindFirstFileExW", (void *)&FindFirstFileExFromAppW },
 	{ "FindFirstFileW", (void *)&redirected_FindFirstFileW },
 	{ "GetFileAttributesExW", (void *)&GetFileAttributesExFromAppW },

@@ -44,6 +44,7 @@
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.ViewManagement.h>
@@ -300,6 +301,11 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 		}
 
 		g_window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+		try {
+			// "App" titles get far less memory on Xbox than "Game" ones; emulators need the latter.
+			_diag("memory limit " + std::to_string(Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20) + " MB");
+		} catch (...) {
+		}
 		_diag("App::Run calling main");
 		g_exit_code = g_main();
 		_diag("App::Run main returned");
