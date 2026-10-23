@@ -49,6 +49,13 @@ jobs:
       - name: Install D3D12 dependencies (Mesa NIR)
         run: python misc/scripts/install_d3d12_sdk_windows.py
 
+      - name: Make the /MT Mesa NIR library linkable with /MD (UWP)
+        shell: pwsh
+        run: |
+          $libs = Get-ChildItem "$env:LOCALAPPDATA\Godot\build_deps" -Recurse -Filter "libNIR.windows.x86_64*.lib"
+          if (-not $libs) { throw "libNIR not found" }
+          python tools/uwp/patch_static_crt_lib.py @($libs.FullName)
+
       - name: Build UWP template
         shell: pwsh
         run: |
