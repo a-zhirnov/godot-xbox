@@ -35,6 +35,9 @@
 #include "core/input/input.h"
 #include "core/input/input_event.h"
 #include "core/os/os.h"
+#include "scene/gui/control.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/rendering_device.h"
 
@@ -237,6 +240,16 @@ void DisplayServerUWP::_handle_event(const uwp::Event &p_event) {
 	}
 }
 
+// Diagnostics: which control holds UI focus after a button release (gamepad-only navigation).
+void DisplayServerUWP::_log_focus_owner() {
+	SceneTree *tree = SceneTree::get_singleton();
+	if (!tree || !tree->get_root()) {
+		return;
+	}
+	Control *focus = tree->get_root()->gui_get_focus_owner();
+	print_verbose(vformat("UWP: focus -> %s", focus ? String(focus->get_path()) + " (" + focus->get_class() + ")" : String("<none>")));
+}
+
 void DisplayServerUWP::_process_gamepads() {
 	Input *input = Input::get_singleton();
 
@@ -266,6 +279,9 @@ void DisplayServerUWP::_process_gamepads() {
 			if (was != is || !prev.connected) {
 				if (was != is) {
 					print_verbose(vformat("UWP: gamepad %d button %d %s", i, (int)m.button, is ? "down" : "up"));
+					if (!is) {
+						_log_focus_owner();
+					}
 				}
 				input->joy_button(i, m.button, is);
 			}

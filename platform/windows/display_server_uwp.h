@@ -67,6 +67,7 @@ class DisplayServerUWP : public DisplayServerHeadless {
 	void _handle_event(const uwp::Event &p_event);
 	void _process_gamepads();
 	void _send_window_event(DisplayServerEnums::WindowEvent p_event);
+	void _log_focus_owner();
 
 public:
 	static void register_uwp_driver();
