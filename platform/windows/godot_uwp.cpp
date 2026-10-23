@@ -31,6 +31,7 @@
 #include "os_windows.h"
 #include "uwp_bridge.h"
 
+#include "core/io/logger.h"
 #include "core/profiling/profiling.h"
 #include "main/main.h"
 
@@ -63,12 +64,29 @@ static void boot_log(const char *p_message) {
 	CloseHandle(file);
 }
 
+class UwpBootLogger : public Logger {
+public:
+	void logv(const char *p_format, va_list p_list, bool p_err) override {
+		char buffer[4096];
+		vsnprintf(buffer, sizeof(buffer), p_format, p_list);
+		size_t len = strlen(buffer);
+		while (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
+			buffer[--len] = '\0';
+		}
+		if (len > 0) {
+			boot_log(buffer);
+		}
+	}
+};
+
 // Runs the engine on the UI thread once the CoreWindow exists.
 static int godot_uwp_main() {
 	boot_log("godot_uwp_main: entered");
 	godot_init_profiler();
 
 	OS_Windows os(GetModuleHandleW(nullptr));
+	// Engine output has no console on Xbox; mirror every message into the boot log from the start.
+	os.add_logger(memnew(UwpBootLogger));
 	boot_log("OS_Windows constructed");
 
 	setlocale(LC_CTYPE, "");
