@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SKIP_DIRS = {".git", ".godot/editor", ".godot/shader_cache", "addons/AynThor", "android"}
+SKIP_DIRS = {".git", ".godot/editor", ".godot/shader_cache", "addons/AynThor/bin", "android"}
 SKIP_FILES = {"gdre_export.log", "export_presets.cfg", ".gitignore", ".gitattributes"}
 ANDROID_EXTENSIONS = ("res://addons/AynThor/AynThor.gdextension",)
 
