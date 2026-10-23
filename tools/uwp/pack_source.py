@@ -62,8 +62,11 @@ def main() -> int:
         for name in names:
             if not name.endswith(".import"):
                 continue
-            for line in open(os.path.join(root, name), encoding="utf-8", errors="replace"):
-                if not line.startswith(("path=", "path.")) or "res://.godot/imported/" not in line:
+            lines = [l for l in open(os.path.join(root, name), encoding="utf-8", errors="replace")
+                     if l.startswith(("path=", "path.")) and "res://.godot/imported/" in l]
+            has_desktop = any(".s3tc.ctex" in l or ".bptc.ctex" in l for l in lines)
+            for line in lines:
+                if has_desktop and (".etc2.ctex" in line or ".astc.ctex" in line):
                     continue
                 rel = line.split('"')[1].replace("res://", "")
                 dst = os.path.join(stage, rel)
