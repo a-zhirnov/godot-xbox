@@ -30,6 +30,8 @@
 
 #include "libretro_core.h"
 
+#include "libretro_d3d11.h"
+
 #include "core/io/dir_access.h"
 #include "core/object/class_db.h"
 #include "core/io/file_access.h"
@@ -56,6 +58,7 @@ Error LibretroCore::load_core(const String &p_core_path) {
 
 	Error err = OS::get_singleton()->open_dynamic_library(p_core_path, library);
 	ERR_FAIL_COND_V_MSG(err != OK, err, vformat("Can't load libretro core %s.", p_core_path));
+	libretro_redirect_file_api(library);
 
 	LOAD_SYMBOL(retro_init);
 	LOAD_SYMBOL(retro_deinit);
@@ -92,13 +95,17 @@ Error LibretroCore::load_core(const String &p_core_path) {
 	return OK;
 }
 
+void LibretroCore::set_directories(const String &p_system_dir, const String &p_save_dir) {
+	system_dir = p_system_dir.utf8();
+	save_dir = p_save_dir.utf8();
+	DirAccess::make_dir_recursive_absolute(p_save_dir);
+}
+
 Error LibretroCore::load_game(const String &p_game_path, const String &p_system_dir, const String &p_save_dir) {
 	ERR_FAIL_COND_V_MSG(!core_initialized, ERR_UNCONFIGURED, "Load a libretro core first.");
 	ERR_FAIL_COND_V_MSG(game_loaded, ERR_ALREADY_IN_USE, "A game is already loaded.");
 
-	system_dir = p_system_dir.utf8();
-	save_dir = p_save_dir.utf8();
-	DirAccess::make_dir_recursive_absolute(p_save_dir);
+	set_directories(p_system_dir, p_save_dir);
 	game_path = p_game_path.utf8();
 
 	retro_system_info info = {};
@@ -117,6 +124,11 @@ Error LibretroCore::load_game(const String &p_game_path, const String &p_system_
 
 	ERR_FAIL_COND_V_MSG(!retro_load_game(&game), ERR_FILE_UNRECOGNIZED, vformat("%s refused to load %s.", core_name, p_game_path));
 	game_loaded = true;
+	if (d3d11 && hw_render.context_reset) {
+		// The context is ready once the game is loaded, as in RetroArch: the core opens its renderer here.
+		hw_context_live = true;
+		hw_render.context_reset();
+	}
 
 	retro_system_av_info av = {};
 	retro_get_system_av_info(&av);
@@ -164,6 +176,41 @@ void LibretroCore::run_frame() {
 	if (game_loaded) {
 		active = this;
 		retro_run();
+		_upload_frame();
+	}
+}
+
+void LibretroCore::_upload_frame() {
+	MutexLock lock(frame_mutex);
+	if (!frame_dirty || frame_width == 0 || frame_height == 0) {
+		return;
+	}
+	frame_dirty = false;
+	if (frame_image.is_null()) {
+		frame_image.instantiate();
+	}
+	frame_image->set_data(frame_width, frame_height, false, Image::FORMAT_RGBA8, frame_rgba);
+	if (texture.is_valid() && (texture->get_width() != frame_width || texture->get_height() != frame_height)) {
+		texture.unref();
+	}
+	if (texture.is_null()) {
+		texture = ImageTexture::create_from_image(frame_image);
+	} else {
+		texture->update(frame_image);
+	}
+}
+
+void LibretroCore::set_option(const String &p_key, const String &p_value) {
+	option_overrides[p_key] = p_value.utf8();
+}
+
+void LibretroCore::_set_variables(const retro_variable *p_vars) {
+	// "Description; first|second|third": the first value is the default.
+	for (const retro_variable *v = p_vars; v && v->key; v++) {
+		const String value = String::utf8(v->value ? v->value : "");
+		const int sep = value.find("; ");
+		const String choices = sep >= 0 ? value.substr(sep + 2) : value;
+		option_values[String::utf8(v->key)] = choices.get_slice("|", 0).utf8();
 	}
 }
 
@@ -208,10 +255,20 @@ void LibretroCore::_close() {
 void LibretroCore::unload() {
 	if (game_loaded) {
 		save_sram();
+		if (hw_context_live && hw_render.context_destroy) {
+			hw_render.context_destroy();
+		}
+		hw_context_live = false;
 		retro_unload_game();
 		game_loaded = false;
 	}
 	_close();
+	if (d3d11) {
+		delete d3d11;
+		d3d11 = nullptr;
+	}
+	hw_render = {};
+	option_values.clear();
 	game_data.clear();
 	texture.unref();
 	frame_image.unref();
@@ -270,6 +327,62 @@ bool LibretroCore::_environment(unsigned p_cmd, void *p_data) {
 			self->_apply_av_info(*(const retro_system_av_info *)p_data);
 			return true;
 		case RETRO_ENVIRONMENT_SET_VARIABLES:
+			self->_set_variables((const retro_variable *)p_data);
+			return true;
+		case RETRO_ENVIRONMENT_GET_VARIABLE: {
+			retro_variable *var = (retro_variable *)p_data;
+			const String key = String::utf8(var->key ? var->key : "");
+			if (const CharString *value = self->option_overrides.getptr(key)) {
+				var->value = value->get_data();
+				return true;
+			}
+			if (const CharString *value = self->option_values.getptr(key)) {
+				var->value = value->get_data();
+				return true;
+			}
+			var->value = nullptr;
+			return false;
+		}
+		case RETRO_ENVIRONMENT_SET_MESSAGE:
+		case RETRO_ENVIRONMENT_SET_MESSAGE_EXT: {
+			// Both structs start with the text.
+			const char *msg = *(const char *const *)p_data;
+			if (msg) {
+				self->last_message = String::utf8(msg);
+				print_line("[core message] " + self->last_message);
+			}
+			return true;
+		}
+		case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+#ifdef WINDOWS_ENABLED
+			*(retro_hw_context_type *)p_data = RETRO_HW_CONTEXT_D3D11;
+			return true;
+#else
+			return false;
+#endif
+		case RETRO_ENVIRONMENT_SET_HW_RENDER: {
+			retro_hw_render_callback *cb = (retro_hw_render_callback *)p_data;
+			if (cb->context_type == RETRO_HW_CONTEXT_NONE) {
+				return true;
+			}
+			if (cb->context_type != RETRO_HW_CONTEXT_D3D11) {
+				return false;
+			}
+			if (!self->d3d11) {
+				self->d3d11 = LibretroD3D11::create();
+			}
+			if (!self->d3d11) {
+				return false;
+			}
+			self->hw_render = *cb;
+			return true;
+		}
+		case RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE:
+			if (!self->d3d11) {
+				return false;
+			}
+			*(const void **)p_data = self->d3d11->get_interface();
+			return true;
 		case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
 		case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
 		case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
@@ -288,11 +401,20 @@ void LibretroCore::_video_refresh(const void *p_data, unsigned p_width, unsigned
 	if (!self || !p_data || p_width == 0 || p_height == 0) {
 		return; // nullptr means "same frame as before" (GET_CAN_DUPE).
 	}
+	MutexLock lock(self->frame_mutex);
+	if (p_data == RETRO_HW_FRAME_BUFFER_VALID) {
+		unsigned width = 0, height = 0;
+		if (self->d3d11 && self->d3d11->read_frame(p_width, p_height, self->frame_rgba, width, height)) {
+			self->frame_width = width;
+			self->frame_height = height;
+			self->frame_dirty = true;
+		}
+		return;
+	}
 	if ((int)p_width != self->frame_width || (int)p_height != self->frame_height) {
 		self->frame_width = p_width;
 		self->frame_height = p_height;
 		self->frame_rgba.resize(p_width * p_height * 4);
-		self->texture.unref();
 	}
 	uint8_t *dst = self->frame_rgba.ptrw();
 	const uint8_t *src = (const uint8_t *)p_data;
@@ -332,15 +454,7 @@ void LibretroCore::_video_refresh(const void *p_data, unsigned p_width, unsigned
 			} break;
 		}
 	}
-	if (self->frame_image.is_null()) {
-		self->frame_image.instantiate();
-	}
-	self->frame_image->set_data(p_width, p_height, false, Image::FORMAT_RGBA8, self->frame_rgba);
-	if (self->texture.is_null()) {
-		self->texture = ImageTexture::create_from_image(self->frame_image);
-	} else {
-		self->texture->update(self->frame_image);
-	}
+	self->frame_dirty = true;
 }
 
 void LibretroCore::_audio_sample(int16_t p_left, int16_t p_right) {
@@ -403,12 +517,15 @@ void LibretroCore::_log(enum retro_log_level p_level, const char *p_format, ...)
 }
 
 void LibretroCore::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_directories", "system_dir", "save_dir"), &LibretroCore::set_directories);
 	ClassDB::bind_method(D_METHOD("load_core", "core_path"), &LibretroCore::load_core);
 	ClassDB::bind_method(D_METHOD("load_game", "game_path", "system_dir", "save_dir"), &LibretroCore::load_game);
 	ClassDB::bind_method(D_METHOD("run_frame"), &LibretroCore::run_frame);
 	ClassDB::bind_method(D_METHOD("reset"), &LibretroCore::reset);
 	ClassDB::bind_method(D_METHOD("save_sram"), &LibretroCore::save_sram);
 	ClassDB::bind_method(D_METHOD("unload"), &LibretroCore::unload);
+	ClassDB::bind_method(D_METHOD("set_option", "key", "value"), &LibretroCore::set_option);
+	ClassDB::bind_method(D_METHOD("get_last_message"), &LibretroCore::get_last_message);
 	ClassDB::bind_method(D_METHOD("set_joypad", "port", "mask"), &LibretroCore::set_joypad);
 	ClassDB::bind_method(D_METHOD("set_analog", "port", "stick", "x", "y"), &LibretroCore::set_analog);
 	ClassDB::bind_method(D_METHOD("get_texture"), &LibretroCore::get_texture);

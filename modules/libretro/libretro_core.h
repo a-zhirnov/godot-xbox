@@ -32,9 +32,13 @@
 
 #include "core/io/image.h"
 #include "core/object/ref_counted.h"
+#include "core/os/mutex.h"
+#include "core/templates/hash_map.h"
 #include "scene/resources/image_texture.h"
 
 #include "libretro.h"
+
+class LibretroD3D11;
 
 // Runs one libretro emulator core in-process: the frontend side of the libretro API.
 // One core at a time (libretro callbacks are global). Drive it from a script every frame:
@@ -74,6 +78,21 @@ class LibretroCore : public RefCounted {
 	CharString game_path;
 	PackedByteArray game_data;
 
+	// Core options: defaults from SET_VARIABLES, values set from the script win.
+	HashMap<String, CharString> option_values;
+	HashMap<String, CharString> option_overrides;
+	String last_message;
+
+	// Hardware rendering (PCSX2): the core draws through a D3D11 device of ours.
+	retro_hw_render_callback hw_render = {};
+	LibretroD3D11 *d3d11 = nullptr;
+	bool hw_context_live = false;
+
+	// video_refresh can come from the core's own GS thread: the frame is kept here and turned
+	// into the texture on the main thread after retro_run().
+	Mutex frame_mutex;
+	bool frame_dirty = false;
+
 	retro_pixel_format pixel_format = RETRO_PIXEL_FORMAT_0RGB1555;
 	PackedByteArray frame_rgba;
 	Ref<Image> frame_image;
@@ -99,6 +118,8 @@ class LibretroCore : public RefCounted {
 	static void _log(enum retro_log_level p_level, const char *p_format, ...);
 
 	void _apply_av_info(const retro_system_av_info &p_info);
+	void _set_variables(const retro_variable *p_vars);
+	void _upload_frame();
 	void _load_sram();
 	void _close();
 
@@ -106,12 +127,18 @@ protected:
 	static void _bind_methods();
 
 public:
+	// Where the core finds its BIOS files and keeps its saves; cores look for BIOS files as soon as
+	// they are loaded, so set these before load_core().
+	void set_directories(const String &p_system_dir, const String &p_save_dir);
 	Error load_core(const String &p_core_path);
 	Error load_game(const String &p_game_path, const String &p_system_dir, const String &p_save_dir);
 	void run_frame();
 	void reset();
 	void save_sram();
 	void unload();
+
+	void set_option(const String &p_key, const String &p_value);
+	String get_last_message() const { return last_message; }
 
 	void set_joypad(int p_port, int p_mask);
 	void set_analog(int p_port, int p_stick, float p_x, float p_y);

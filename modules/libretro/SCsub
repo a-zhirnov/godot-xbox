@@ -7,3 +7,7 @@ Import("env_modules")
 env_libretro = env_modules.Clone()
 env_libretro.Prepend(CPPPATH=["thirdparty"])
 env_libretro.add_source_files(env.modules_sources, "*.cpp")
+
+if env["platform"] == "windows":
+    # Hardware-rendered cores (PCSX2) draw through a D3D11 device of the module's own.
+    env.Append(LIBS=["d3d11"])
