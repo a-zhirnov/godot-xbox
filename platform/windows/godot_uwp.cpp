@@ -98,6 +98,9 @@ static int godot_uwp_main() {
 		wide_to_utf8(exe_path),
 		"--rendering-driver",
 		"d3d12",
+		// Same renderer as the Android build: identical look and far fewer shaders than Forward+.
+		"--rendering-method",
+		"mobile",
 		// Release templates refuse path overrides (--main-pack, --log-file): the pack is found
 		// next to the executable as <exe name>.pck instead.
 		"--verbose",

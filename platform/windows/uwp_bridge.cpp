@@ -71,12 +71,18 @@ std::wstring g_local_dir;
 
 // Diagnostics for a console without a debugger: appends to <TempState>\\uwp_diag.log.
 void _diag(const std::string &p_message) {
-	wchar_t temp[MAX_PATH + 2];
-	DWORD len = GetTempPathW(MAX_PATH, temp);
-	if (len == 0 || len > MAX_PATH) {
-		return;
+	// LocalState once known (readable through Device Portal), the temp folder before that.
+	std::wstring path;
+	if (!g_local_dir.empty()) {
+		path = g_local_dir;
+	} else {
+		wchar_t temp[MAX_PATH + 2];
+		DWORD len = GetTempPathW(MAX_PATH, temp);
+		if (len == 0 || len > MAX_PATH) {
+			return;
+		}
+		path.assign(temp, len);
 	}
-	std::wstring path(temp, len);
 	path += L"uwp_diag.log";
 	HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (file == INVALID_HANDLE_VALUE) {
