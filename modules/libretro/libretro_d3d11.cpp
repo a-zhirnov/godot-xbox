@@ -213,6 +213,50 @@ BOOL WINAPI redirected_MoveFileExW(LPCWSTR p_from, LPCWSTR p_to, DWORD p_flags) 
 	return MoveFileFromAppW(p_from, p_to);
 }
 
+// UWP hands out executable memory only through VirtualProtectFromApp (with codeGeneration):
+// VirtualAlloc(FromApp) refuses PAGE_EXECUTE_*. JIT cores (PCSX2) ask for RWX blocks directly, so
+// those are allocated without execute and then turned executable.
+DWORD without_execute(DWORD p_protect) {
+	switch (p_protect & 0xFF) {
+		case PAGE_EXECUTE:
+			return (p_protect & ~0xFF) | PAGE_NOACCESS;
+		case PAGE_EXECUTE_READ:
+			return (p_protect & ~0xFF) | PAGE_READONLY;
+		case PAGE_EXECUTE_READWRITE:
+		case PAGE_EXECUTE_WRITECOPY:
+			return (p_protect & ~0xFF) | PAGE_READWRITE;
+		default:
+			return p_protect;
+	}
+}
+
+LPVOID WINAPI redirected_VirtualAlloc(LPVOID p_address, SIZE_T p_size, DWORD p_type, DWORD p_protect) {
+	const DWORD plain = without_execute(p_protect);
+	void *memory = VirtualAllocFromApp(p_address, p_size, p_type, plain);
+	if (!memory || plain == p_protect || !(p_type & MEM_COMMIT)) {
+		return memory;
+	}
+	ULONG old = 0;
+	if (!VirtualProtectFromApp(memory, p_size, p_protect, &old)) {
+		const DWORD error = GetLastError();
+		if (!p_address || (p_type & MEM_RESERVE)) {
+			VirtualFree(memory, 0, MEM_RELEASE);
+		}
+		SetLastError(error);
+		return nullptr;
+	}
+	return memory;
+}
+
+BOOL WINAPI redirected_VirtualProtect(LPVOID p_address, SIZE_T p_size, DWORD p_protect, PDWORD r_old) {
+	ULONG old = 0;
+	const BOOL ok = VirtualProtectFromApp(p_address, p_size, p_protect, &old);
+	if (r_old) {
+		*r_old = old;
+	}
+	return ok;
+}
+
 struct Redirect {
 	const char *name;
 	void *to;
@@ -230,6 +274,8 @@ const Redirect redirects[] = {
 	{ "DeleteFileW", (void *)&DeleteFileFromAppW },
 	{ "CopyFileW", (void *)&CopyFileFromAppW },
 	{ "MoveFileExW", (void *)&redirected_MoveFileExW },
+	{ "VirtualAlloc", (void *)&redirected_VirtualAlloc },
+	{ "VirtualProtect", (void *)&redirected_VirtualProtect },
 };
 
 } // namespace
@@ -272,7 +318,7 @@ void libretro_redirect_file_api(void *p_module) {
 		}
 	}
 	if (patched) {
-		print_line(vformat("libretro: %d file imports of the core go through the broker", patched));
+		print_line(vformat("libretro: %d file and memory imports of the core redirected for UWP", patched));
 	}
 }
 

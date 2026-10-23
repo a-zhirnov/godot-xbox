@@ -54,6 +54,7 @@ public:
 };
 
 // Points a core's file imports (CreateFileW, FindFirstFileExW, ...) at the brokered "FromApp"
-// variants, so a core that opens its game itself (need_fullpath) reaches USB drives on Xbox.
+// variants, so a core that opens its game itself (need_fullpath) reaches USB drives on Xbox, and
+// its VirtualAlloc/VirtualProtect at ones that can make JIT memory executable in UWP.
 // Does nothing outside UWP.
 void libretro_redirect_file_api(void *p_module);

@@ -31,6 +31,7 @@
 #include "register_types.h"
 
 #include "libretro_core.h"
+#include "switch_core.h"
 
 #include "core/object/class_db.h"
 
@@ -39,6 +40,7 @@ void initialize_libretro_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	GDREGISTER_CLASS(LibretroCore);
+	GDREGISTER_CLASS(SwitchCore);
 }
 
 void uninitialize_libretro_module(ModuleInitializationLevel p_level) {
