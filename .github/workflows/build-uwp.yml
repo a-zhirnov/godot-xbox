@@ -32,7 +32,7 @@ jobs:
         run: python -m pip install scons pillow
 
       - name: Restore SCons cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .scons_cache
           key: scons-uwp-${{ github.sha }}
@@ -64,6 +64,13 @@ jobs:
           }
           scons @flags
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Save SCons cache (also after a failed build)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .scons_cache
+          key: scons-uwp-${{ github.sha }}
 
       - name: Collect binaries
         if: ${{ !inputs.quick }}
