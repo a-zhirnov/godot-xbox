@@ -8,6 +8,10 @@ on:
         description: "Also build the signed MSIX package"
         type: boolean
         default: true
+      quick:
+        description: "Quick check: compile only the platform/driver objects (all errors at once), no link"
+        type: boolean
+        default: false
 
 env:
   SCONS_CACHE: ${{ github.workspace }}/.scons_cache
@@ -46,15 +50,23 @@ jobs:
         run: python misc/scripts/install_d3d12_sdk_windows.py
 
       - name: Build UWP template
-        run: >
-          scons platform=windows uwp=yes target=template_release arch=x86_64
-          d3d12=yes vulkan=no opengl3=no angle=no sdl=no xaudio2=yes accesskit=no winrt=no
-          use_static_cpp=yes lto=none debug_symbols=no
-          module_camera_enabled=no module_upnp_enabled=no module_webrtc_enabled=no
-          module_openxr_enabled=no module_mono_enabled=no module_mobile_vr_enabled=no
-          -j4
+        shell: pwsh
+        run: |
+          $flags = @(
+            "platform=windows", "uwp=yes", "target=template_release", "arch=x86_64",
+            "d3d12=yes", "vulkan=no", "opengl3=no", "angle=no", "sdl=no", "xaudio2=yes", "accesskit=no", "winrt=no",
+            "use_static_cpp=yes", "lto=none", "debug_symbols=no",
+            "module_camera_enabled=no", "module_upnp_enabled=no", "module_webrtc_enabled=no",
+            "module_openxr_enabled=no", "module_mono_enabled=no", "module_mobile_vr_enabled=no",
+            "-j4")
+          if ("${{ inputs.quick }}" -eq "true") {
+            $flags += @("-k", "bin/obj/platform/windows", "bin/obj/drivers/d3d12", "bin/obj/drivers/xaudio2")
+          }
+          scons @flags
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Collect binaries
+        if: ${{ !inputs.quick }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
@@ -62,13 +74,14 @@ jobs:
           Get-ChildItem bin | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.quick }}
         with:
           name: uwp-engine
           path: out/socket.exe
           retention-days: 14
 
   package:
-    if: ${{ inputs.package }}
+    if: ${{ inputs.package && !inputs.quick }}
     needs: engine
     runs-on: windows-2022
     timeout-minutes: 30

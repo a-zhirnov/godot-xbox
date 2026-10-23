@@ -33,6 +33,12 @@
 #ifdef UWP_ENABLED
 #include "display_server_uwp.h"
 #include "uwp_bridge.h"
+
+#include "core/config/project_settings.h"
+
+#include <mmdeviceapi.h>
+
+typedef HRESULT(WINAPI *RtlGetVersionPtr)(OSVERSIONINFOEXW *lpVersionInformation);
 #else
 #include "display_server_windows.h"
 #endif
@@ -297,7 +303,7 @@ void OS_Windows::initialize() {
 	QueryPerformanceFrequency((LARGE_INTEGER *)&ticks_per_second);
 	QueryPerformanceCounter((LARGE_INTEGER *)&ticks_start);
 
-#if WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP
+#if WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP && !defined(UWP_ENABLED)
 	// set minimum resolution for periodic timers, otherwise Sleep(n) may wait at least as
 	//  long as the windows scheduler resolution (~16-30ms) even for calls like Sleep(1)
 	TIMECAPS time_caps;
@@ -394,7 +400,7 @@ void OS_Windows::finalize_core() {
 
 	FileAccessWindows::finalize();
 
-#if WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP
+#if WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP && !defined(UWP_ENABLED)
 	timeEndPeriod(1);
 #endif
 
