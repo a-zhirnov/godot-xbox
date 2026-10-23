@@ -77,6 +77,9 @@ Error LibretroCore::load_core(const String &p_core_path) {
 	LOAD_SYMBOL(retro_unload_game);
 	LOAD_SYMBOL(retro_get_memory_size);
 	LOAD_SYMBOL(retro_get_memory_data);
+	LOAD_SYMBOL(retro_serialize_size);
+	LOAD_SYMBOL(retro_serialize);
+	LOAD_SYMBOL(retro_unserialize);
 
 	active = this;
 	retro_set_environment(_environment);
@@ -170,6 +173,36 @@ void LibretroCore::save_sram() {
 	Ref<FileAccess> f = FileAccess::open(sram_path, FileAccess::WRITE);
 	ERR_FAIL_COND_MSG(f.is_null(), vformat("Can't write save %s.", sram_path));
 	f->store_buffer(data, size);
+}
+
+Error LibretroCore::save_state(const String &p_path) {
+	ERR_FAIL_COND_V(!game_loaded, ERR_UNCONFIGURED);
+	const size_t size = retro_serialize_size();
+	ERR_FAIL_COND_V_MSG(size == 0, ERR_UNAVAILABLE, vformat("%s has no save states.", core_name));
+	PackedByteArray data;
+	data.resize(size);
+	ERR_FAIL_COND_V_MSG(!retro_serialize(data.ptrw(), size), FAILED, "The core could not save its state.");
+	DirAccess::make_dir_recursive_absolute(p_path.get_base_dir());
+	// Written next to the old one and swapped in, so a crash mid-write never loses the last state.
+	const String temp = p_path + ".tmp";
+	{
+		Ref<FileAccess> f = FileAccess::open(temp, FileAccess::WRITE);
+		ERR_FAIL_COND_V_MSG(f.is_null(), ERR_CANT_CREATE, vformat("Can't write %s.", temp));
+		f->store_buffer(data.ptr(), size);
+	}
+	if (FileAccess::exists(p_path)) {
+		DirAccess::remove_absolute(p_path);
+	}
+	return DirAccess::rename_absolute(temp, p_path);
+}
+
+Error LibretroCore::load_state(const String &p_path) {
+	ERR_FAIL_COND_V(!game_loaded, ERR_UNCONFIGURED);
+	Error err = OK;
+	PackedByteArray data = FileAccess::get_file_as_bytes(p_path, &err);
+	ERR_FAIL_COND_V_MSG(err != OK, err, vformat("Can't read %s.", p_path));
+	ERR_FAIL_COND_V_MSG(!retro_unserialize(data.ptr(), data.size()), FAILED, "The core refused the saved state.");
+	return OK;
 }
 
 void LibretroCore::run_frame() {
@@ -523,6 +556,8 @@ void LibretroCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("run_frame"), &LibretroCore::run_frame);
 	ClassDB::bind_method(D_METHOD("reset"), &LibretroCore::reset);
 	ClassDB::bind_method(D_METHOD("save_sram"), &LibretroCore::save_sram);
+	ClassDB::bind_method(D_METHOD("save_state", "path"), &LibretroCore::save_state);
+	ClassDB::bind_method(D_METHOD("load_state", "path"), &LibretroCore::load_state);
 	ClassDB::bind_method(D_METHOD("unload"), &LibretroCore::unload);
 	ClassDB::bind_method(D_METHOD("set_option", "key", "value"), &LibretroCore::set_option);
 	ClassDB::bind_method(D_METHOD("get_last_message"), &LibretroCore::get_last_message);

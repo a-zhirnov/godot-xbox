@@ -67,6 +67,9 @@ class LibretroCore : public RefCounted {
 	void (*retro_unload_game)() = nullptr;
 	size_t (*retro_get_memory_size)(unsigned) = nullptr;
 	void *(*retro_get_memory_data)(unsigned) = nullptr;
+	size_t (*retro_serialize_size)() = nullptr;
+	bool (*retro_serialize)(void *, size_t) = nullptr;
+	bool (*retro_unserialize)(const void *, size_t) = nullptr;
 
 	bool core_initialized = false;
 	bool game_loaded = false;
@@ -135,6 +138,9 @@ public:
 	void run_frame();
 	void reset();
 	void save_sram();
+	// Save states: the core's whole machine state in one file.
+	Error save_state(const String &p_path);
+	Error load_state(const String &p_path);
 	void unload();
 
 	void set_option(const String &p_key, const String &p_value);
