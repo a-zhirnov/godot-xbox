@@ -1,0 +1,19 @@
+name: probe-runner
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: windows-2022
+    steps:
+      - name: Inspect toolchain
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          "VS: $vs"
+          Get-ChildItem "$vs\VC\Tools\MSVC" | ForEach-Object { $_.Name; Get-ChildItem "$($_.FullName)\lib\x64\store" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { "  store: " + $_.Name } }
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" | ForEach-Object { "SDK: " + $_.Name }
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include\*\cppwinrt\winrt\Windows.UI.Core.h" -ErrorAction SilentlyContinue | ForEach-Object { "cppwinrt: " + $_.FullName }
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Lib\*\um\x64\WindowsApp.lib" -ErrorAction SilentlyContinue | ForEach-Object { "WindowsApp.lib: " + $_.FullName }
+          Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" -ErrorAction SilentlyContinue | ForEach-Object { "makeappx: " + $_.FullName }
+          python --version
+          Get-PSDrive C | Select-Object Used,Free
