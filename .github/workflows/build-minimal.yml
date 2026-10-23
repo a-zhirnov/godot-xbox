@@ -1,0 +1,32 @@
+name: build-minimal
+
+# Builds a tiny UWP app (no engine) to isolate packaging/launch problems.
+on:
+  workflow_dispatch:
+
+jobs:
+  minimal:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import MSVC environment
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+          }
+
+      - name: Compile
+        shell: cmd
+        run: |
+          mkdir out
+          cl /nologo /MT /EHsc /std:c++20 /DUNICODE /D_UNICODE platform\windows\uwp_bridge.cpp tools\uwp\minimal\minimal_main.cpp /Fe:out\socket.exe /link /SUBSYSTEM:WINDOWS /APPCONTAINER /LIBPATH:"%VCToolsInstallDir%lib\x64\store" /NODEFAULTLIB:kernel32.lib WindowsApp.lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uwp-minimal
+          path: out/socket.exe
+          retention-days: 7
