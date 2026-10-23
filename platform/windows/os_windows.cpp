@@ -255,9 +255,15 @@ BOOL WINAPI HandlerRoutine(_In_ DWORD dwCtrlType) {
 	}
 }
 
+#ifdef UWP_ENABLED
+void OS_Windows::alert(const String &p_alert, const String &p_title) {
+	ERR_PRINT(p_title + ": " + p_alert);
+}
+#else
 void OS_Windows::alert(const String &p_alert, const String &p_title) {
 	MessageBoxW(nullptr, (LPCWSTR)(p_alert.utf16().get_data()), (LPCWSTR)(p_title.utf16().get_data()), MB_OK | MB_ICONEXCLAMATION | MB_TASKMODAL);
 }
+#endif
 
 void OS_Windows::initialize_debugging() {
 	SetConsoleCtrlHandler(HandlerRoutine, TRUE);
@@ -740,6 +746,11 @@ Vector<String> OS_Windows::_get_video_adapter_driver_info_reg(const String &p_na
 	return info;
 }
 
+#ifdef UWP_ENABLED
+Vector<String> OS_Windows::_get_video_adapter_driver_info_wmi(const String &p_name) const {
+	return Vector<String>();
+}
+#else
 Vector<String> OS_Windows::_get_video_adapter_driver_info_wmi(const String &p_name) const {
 	Vector<String> info;
 
@@ -830,6 +841,7 @@ Vector<String> OS_Windows::_get_video_adapter_driver_info_wmi(const String &p_na
 
 	return info;
 }
+#endif
 
 Vector<String> OS_Windows::get_video_adapter_driver_info() const {
 	if (RenderingServer::get_singleton() == nullptr) {
@@ -1267,7 +1279,11 @@ Dictionary OS_Windows::get_memory_info() const {
 
 	PERFORMANCE_INFORMATION pref_info;
 	pref_info.cb = sizeof(pref_info);
+#ifdef UWP_ENABLED
+	ZeroMemory(&pref_info, sizeof(pref_info)); // GetPerformanceInfo isn't available to UWP.
+#else
 	GetPerformanceInfo(&pref_info, sizeof(pref_info));
+#endif
 
 	typedef void(WINAPI * PGetCurrentThreadStackLimits)(PULONG_PTR, PULONG_PTR);
 	PGetCurrentThreadStackLimits GetCurrentThreadStackLimits = (PGetCurrentThreadStackLimits)(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetCurrentThreadStackLimits");
@@ -2211,6 +2227,11 @@ OS_Windows::StdHandleType OS_Windows::get_stderr_type() const {
 	}
 }
 
+#ifdef UWP_ENABLED
+Error OS_Windows::shell_open(const String &p_uri) {
+	return ERR_UNAVAILABLE;
+}
+#else
 Error OS_Windows::shell_open(const String &p_uri) {
 	INT_PTR ret = (INT_PTR)ShellExecuteW(nullptr, nullptr, (LPCWSTR)(p_uri.utf16().get_data()), nullptr, nullptr, SW_SHOWNORMAL);
 	if (ret > 32) {
@@ -2234,7 +2255,13 @@ Error OS_Windows::shell_open(const String &p_uri) {
 		}
 	}
 }
+#endif
 
+#ifdef UWP_ENABLED
+Error OS_Windows::shell_show_in_file_manager(String p_path, bool p_open_folder) {
+	return ERR_UNAVAILABLE;
+}
+#else
 Error OS_Windows::shell_show_in_file_manager(String p_path, bool p_open_folder) {
 	bool open_folder = false;
 	if (DirAccess::dir_exists_absolute(p_path) && p_open_folder) {
@@ -2274,6 +2301,7 @@ Error OS_Windows::shell_show_in_file_manager(String p_path, bool p_open_folder) 
 		}
 	}
 }
+#endif
 
 String OS_Windows::get_locale() const {
 	const _WinLocale *wl = &_win_locales[0];
@@ -2487,6 +2515,11 @@ String OS_Windows::get_godot_dir_name() const {
 	return String(GODOT_VERSION_SHORT_NAME).capitalize();
 }
 
+#ifdef UWP_ENABLED
+String OS_Windows::get_system_dir(SystemDir p_dir, bool p_shared_storage) const {
+	return String();
+}
+#else
 String OS_Windows::get_system_dir(SystemDir p_dir, bool p_shared_storage) const {
 	KNOWNFOLDERID id;
 
@@ -2524,6 +2557,7 @@ String OS_Windows::get_system_dir(SystemDir p_dir, bool p_shared_storage) const 
 	CoTaskMemFree(szPath);
 	return path;
 }
+#endif
 
 String OS_Windows::get_user_data_dir(const String &p_user_dir) const {
 	return get_data_path().path_join(p_user_dir).replace_char('\\', '/');
@@ -2542,6 +2576,11 @@ String OS_Windows::expand_path(const String &p_path) const {
 	return path;
 }
 
+#ifdef UWP_ENABLED
+String OS_Windows::get_unique_id() const {
+	return String();
+}
+#else
 String OS_Windows::get_unique_id() const {
 	HW_PROFILE_INFOA HwProfInfo;
 	ERR_FAIL_COND_V(!GetCurrentHwProfileA(&HwProfInfo), "");
@@ -2549,6 +2588,7 @@ String OS_Windows::get_unique_id() const {
 	// Note: Windows API returns a GUID with null termination.
 	return String::ascii(Span<char>(HwProfInfo.szHwProfileGuid, strnlen(HwProfInfo.szHwProfileGuid, HW_PROFILE_GUIDLEN)));
 }
+#endif
 
 bool OS_Windows::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "system_fonts") {
@@ -2569,6 +2609,11 @@ bool OS_Windows::is_disable_crash_handler() const {
 	return crash_handler.is_disabled();
 }
 
+#ifdef UWP_ENABLED
+Error OS_Windows::move_to_trash(const String &p_path) {
+	return ERR_UNAVAILABLE;
+}
+#else
 Error OS_Windows::move_to_trash(const String &p_path) {
 	SHFILEOPSTRUCTW sf;
 
@@ -2596,7 +2641,13 @@ Error OS_Windows::move_to_trash(const String &p_path) {
 
 	return OK;
 }
+#endif
 
+#ifdef UWP_ENABLED
+String OS_Windows::get_system_ca_certificates() {
+	return String();
+}
+#else
 String OS_Windows::get_system_ca_certificates() {
 	HCERTSTORE cert_store = CertOpenSystemStoreA(0, "ROOT");
 	ERR_FAIL_NULL_V_MSG(cert_store, "", "Failed to read the root certificate store.");
@@ -2627,6 +2678,7 @@ String OS_Windows::get_system_ca_certificates() {
 	CertCloseStore(cert_store, 0);
 	return certs;
 }
+#endif
 
 void OS_Windows::add_frame_delay(bool p_can_draw, bool p_wake_for_events) {
 	if (p_wake_for_events) {
@@ -2798,6 +2850,7 @@ bool OS_Windows::_test_create_rendering_device_and_gl(const String &p_display_dr
 }
 #endif
 
+#ifndef UWP_ENABLED
 #ifdef _MSC_VER
 #define IAT_HOOK_CALL __declspec(guard(nocf))
 #else
@@ -2899,6 +2952,7 @@ LPVOID install_iat_hook(const String &p_target, const String &p_module, const St
 	}
 	return nullptr;
 }
+#endif // UWP_ENABLED
 
 OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 	hInstance = _hInstance;

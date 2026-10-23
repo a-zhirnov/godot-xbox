@@ -419,7 +419,11 @@ bool DirAccessWindows::is_case_sensitive(const String &p_path) const {
 
 	NT_IO_STATUS_BLOCK io_status_block;
 	NT_FILE_CASE_SENSITIVE_INFO file_info;
+#ifdef UWP_ENABLED
+	LONG out = -1; // NtQueryInformationFile isn't available to UWP.
+#else
 	LONG out = NtQueryInformationFile(h_file, &io_status_block, &file_info, sizeof(NT_FILE_CASE_SENSITIVE_INFO), FileCaseSensitiveInformation);
+#endif
 	::CloseHandle(h_file);
 
 	if (out >= 0) {
