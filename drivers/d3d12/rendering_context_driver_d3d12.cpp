@@ -93,7 +93,12 @@ Error RenderingContextDriverD3D12::_init_device_factory() {
 	String agility_sdk_path = String(".\\") + Engine::get_singleton()->get_architecture_name();
 
 #ifdef UWP_ENABLED
-	// UWP can't LoadLibrary system DLLs; they are linked statically, so just get their handles.
+	// UWP can't LoadLibrary system DLLs. Taking the address of an export turns the import library
+	// into a real static import, so the loader maps the DLL at startup and GetModuleHandle finds it.
+	static void *volatile force_d3d12_import = (void *)&D3D12GetDebugInterface;
+	static void *volatile force_dxgi_import = (void *)&CreateDXGIFactory2;
+	(void)force_d3d12_import;
+	(void)force_dxgi_import;
 	lib_d3d12 = GetModuleHandleW(L"D3D12.dll");
 	ERR_FAIL_NULL_V(lib_d3d12, ERR_CANT_CREATE);
 
