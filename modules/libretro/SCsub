@@ -10,4 +10,9 @@ env_libretro.add_source_files(env.modules_sources, "*.cpp")
 
 if env["platform"] == "windows":
     # Hardware-rendered cores (PCSX2) draw through a D3D11 device of the module's own.
-    env.Append(LIBS=["d3d11"])
+    # Like platform/windows/detect.py: MSVC system libraries go in as link flags, not LIBS
+    # (which get the build's own library suffix).
+    if env.msvc:
+        env.Append(LINKFLAGS=["d3d11.lib"])
+    else:
+        env.Append(LIBS=["d3d11"])
