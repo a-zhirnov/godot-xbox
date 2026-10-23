@@ -49,11 +49,27 @@ static std::string wide_to_utf8(const wchar_t *p_wide) {
 	return out;
 }
 
+// Appends a line to <LocalState>\\uwp_boot.log; the only diagnostics available on a console without a debugger.
+static void boot_log(const char *p_message) {
+	std::wstring path = uwp::get_local_dir();
+	path += L"uwp_boot.log";
+	HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	std::string line = std::string(p_message) + "\r\n";
+	DWORD written = 0;
+	WriteFile(file, line.data(), (DWORD)line.size(), &written, nullptr);
+	CloseHandle(file);
+}
+
 // Runs the engine on the UI thread once the CoreWindow exists.
 static int godot_uwp_main() {
+	boot_log("godot_uwp_main: entered");
 	godot_init_profiler();
 
 	OS_Windows os(GetModuleHandleW(nullptr));
+	boot_log("OS_Windows constructed");
 
 	setlocale(LC_CTYPE, "");
 
@@ -70,6 +86,9 @@ static int godot_uwp_main() {
 		"d3d12",
 		"--main-pack",
 		wide_to_utf8(pack_path.c_str()),
+		"--log-file",
+		wide_to_utf8((std::wstring(uwp::get_local_dir()) + L"godot.log").c_str()),
+		"--verbose",
 	};
 	std::vector<char *> argv;
 	for (std::string &arg : args_storage) {
@@ -77,14 +96,19 @@ static int godot_uwp_main() {
 	}
 	const int argc = (int)argv.size();
 
+	boot_log("calling Main::setup");
 	Error err = Main::setup(argv[0], argc - 1, &argv[1]);
 	if (err != OK) {
+		boot_log("Main::setup failed");
 		return err == ERR_HELP ? EXIT_SUCCESS : EXIT_FAILURE;
 	}
+	boot_log("Main::setup ok, calling Main::start");
 
 	if (Main::start() == EXIT_SUCCESS) {
+		boot_log("Main::start ok, running");
 		os.run();
 	} else {
+		boot_log("Main::start failed");
 		os.set_exit_code(EXIT_FAILURE);
 	}
 	Main::cleanup();
