@@ -58,7 +58,7 @@ class DisplayServerUWP : public DisplayServerHeadless {
 	Size2i window_size;
 	Point2i mouse_position;
 	BitField<MouseButtonMask> mouse_button_mask;
-	bool focused = true;
+	bool focused = false; // Becomes true with the first activation/visibility event.
 	DisplayServerEnums::VSyncMode vsync_mode = DisplayServerEnums::VSYNC_ENABLED;
 
 	uwp::GamepadState gamepads[uwp::MAX_GAMEPADS];
