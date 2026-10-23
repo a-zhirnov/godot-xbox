@@ -42,6 +42,11 @@ def main() -> int:
             # The engine loads the imported copy; the original source asset isn't needed.
             if os.path.exists(os.path.join(root, name + ".import")):
                 continue
+            # Xbox GPUs take the desktop (BC) copy; drop the mobile one when both were imported.
+            if name.endswith((".etc2.ctex", ".astc.ctex")):
+                stem = name.rsplit(".", 2)[0]
+                if any(os.path.exists(os.path.join(root, stem + alt)) for alt in (".s3tc.ctex", ".bptc.ctex")):
+                    continue
             dst = os.path.join(stage, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if rel == ".godot/extension_list.cfg":
