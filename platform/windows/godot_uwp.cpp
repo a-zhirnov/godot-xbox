@@ -94,18 +94,12 @@ static int godot_uwp_main() {
 	wchar_t exe_path[1024] = {};
 	GetModuleFileNameW(nullptr, exe_path, 1024);
 
-	// The game pack ships next to the executable, named after the executable.
-	std::wstring pack_path = uwp::get_install_dir();
-	pack_path += L"game.pck";
-
 	std::vector<std::string> args_storage = {
 		wide_to_utf8(exe_path),
 		"--rendering-driver",
 		"d3d12",
-		"--main-pack",
-		wide_to_utf8(pack_path.c_str()),
-		"--log-file",
-		wide_to_utf8((std::wstring(uwp::get_local_dir()) + L"godot.log").c_str()),
+		// Release templates refuse path overrides (--main-pack, --log-file): the pack is found
+		// next to the executable as <exe name>.pck instead.
 		"--verbose",
 	};
 	std::vector<char *> argv;
