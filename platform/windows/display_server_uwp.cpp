@@ -64,10 +64,12 @@ static const struct {
 	uint32_t uwp_button;
 	JoyButton button;
 } uwp_button_map[] = {
-	{ UWP_GAMEPAD_A, JoyButton::A },
-	{ UWP_GAMEPAD_B, JoyButton::B },
-	{ UWP_GAMEPAD_X, JoyButton::X },
-	{ UWP_GAMEPAD_Y, JoyButton::Y },
+	// Face buttons are reported the way the Android build sees them on the AYN Thor (east/south
+	// and north/west swapped), so the game's own "Xbox controller" option is the right one on Xbox.
+	{ UWP_GAMEPAD_A, JoyButton::B },
+	{ UWP_GAMEPAD_B, JoyButton::A },
+	{ UWP_GAMEPAD_X, JoyButton::Y },
+	{ UWP_GAMEPAD_Y, JoyButton::X },
 	{ UWP_GAMEPAD_VIEW, JoyButton::BACK },
 	{ UWP_GAMEPAD_MENU, JoyButton::START },
 	{ UWP_GAMEPAD_LEFT_THUMBSTICK, JoyButton::LEFT_STICK },
