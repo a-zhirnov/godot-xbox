@@ -1,0 +1,131 @@
+name: build-uwp
+
+# Windows minutes are billed at 2x on private repositories, so this is manual only.
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Also build the signed MSIX package"
+        type: boolean
+        default: true
+
+env:
+  SCONS_CACHE: ${{ github.workspace }}/.scons_cache
+  SCONS_CACHE_LIMIT: "4096"
+
+jobs:
+  engine:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install scons pillow
+
+      - name: Restore SCons cache
+        uses: actions/cache@v4
+        with:
+          path: .scons_cache
+          key: scons-uwp-${{ github.sha }}
+          restore-keys: scons-uwp-
+
+      - name: Import MSVC environment
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+          }
+
+      - name: Install D3D12 dependencies (Mesa NIR)
+        run: python misc/scripts/install_d3d12_sdk_windows.py
+
+      - name: Build UWP template
+        run: >
+          scons platform=windows uwp=yes target=template_release arch=x86_64
+          d3d12=yes vulkan=no opengl3=no angle=no sdl=no xaudio2=yes accesskit=no winrt=no
+          use_static_cpp=yes lto=none debug_symbols=no
+          module_camera_enabled=no module_upnp_enabled=no module_webrtc_enabled=no
+          module_openxr_enabled=no module_mono_enabled=no module_mobile_vr_enabled=no
+          -j4
+
+      - name: Collect binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item bin\godot.windows.template_release.x86_64.exe out\socket.exe
+          Get-ChildItem bin | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uwp-engine
+          path: out/socket.exe
+          retention-days: 14
+
+  package:
+    if: ${{ inputs.package }}
+    needs: engine
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: python -m pip install pillow
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: uwp-engine
+          path: layout
+
+      - name: Fetch game pack (optional)
+        shell: pwsh
+        run: |
+          gh release download game-pck --pattern game.pck --dir layout 2>$null
+          if (-not (Test-Path layout\game.pck)) { Write-Warning "No game.pck release asset found; the package will start but show an error." }
+
+      - name: Generate tile assets and manifest
+        shell: pwsh
+        run: |
+          python tools/uwp/make_assets.py layout/Assets
+          $m = Get-Content tools/uwp/AppxManifest.xml -Raw
+          $m = $m.Replace('@PACKAGE_NAME@', 'Zhirnov.Socket').Replace('@PUBLISHER@', 'CN=Zhirnov Studio').Replace('@VERSION@', '0.3.2.0')
+          $m = $m.Replace('@DISPLAY_NAME@', 'Socket').Replace('@PUBLISHER_DISPLAY_NAME@', 'Zhirnov Studio')
+          Set-Content -Path layout/AppxManifest.xml -Value $m -Encoding utf8
+
+      - name: Pack and sign
+        shell: pwsh
+        env:
+          SIGNING_PFX_B64: ${{ secrets.SIGNING_PFX_B64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $kit = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.*\x64" -Directory -ErrorAction SilentlyContinue
+          $bin = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" | Sort-Object FullName | Select-Object -Last 1).DirectoryName
+          if ($env:SIGNING_PFX_B64) {
+            [IO.File]::WriteAllBytes("signing.pfx", [Convert]::FromBase64String($env:SIGNING_PFX_B64))
+            $pwd_plain = $env:SIGNING_PFX_PASSWORD
+          } else {
+            Write-Warning "No signing secret; generating a throwaway certificate."
+            $cert = New-SelfSignedCertificate -Type Custom -Subject "CN=Zhirnov Studio" -KeyUsage DigitalSignature -FriendlyName "Socket dev" -CertStoreLocation "Cert:\CurrentUser\My" -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+            $pwd_plain = "throwaway"
+            Export-PfxCertificate -Cert $cert -FilePath signing.pfx -Password (ConvertTo-SecureString $pwd_plain -AsPlainText -Force) | Out-Null
+          }
+          & "$bin\makeappx.exe" pack /d layout /p Socket.msix /o
+          & "$bin\signtool.exe" sign /fd SHA256 /f signing.pfx /p $pwd_plain Socket.msix
+          Get-Item Socket.msix | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: socket-msix
+          path: Socket.msix
+          retention-days: 14

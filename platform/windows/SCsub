@@ -25,18 +25,30 @@ common_win = [
     "drop_target_windows.cpp",
 ]
 
-if env["angle"]:
-    common_win += ["gl_manager_windows_angle.cpp"]
-
-if env["library_type"] == "executable":
-    common_win += ["godot_windows.cpp"]
+if env["uwp"]:
+    # UWP: CoreWindow + Direct3D 12 only, no Win32 windowing, tray, menus, TTS or OpenGL.
+    common_win = [
+        "os_windows.cpp",
+        "key_mapping_windows.cpp",
+        "windows_terminal_logger.cpp",
+        "windows_utils.cpp",
+        "display_server_uwp.cpp",
+        "godot_uwp.cpp",
+        "crash_handler_uwp.cpp",
+    ]
 else:
-    common_win += ["libgodot_windows.cpp"]
+    if env["angle"]:
+        common_win += ["gl_manager_windows_angle.cpp"]
 
-if env.msvc:
-    common_win += ["crash_handler_windows_seh.cpp"]
-else:
-    common_win += ["crash_handler_windows_signal.cpp"]
+    if env["library_type"] == "executable":
+        common_win += ["godot_windows.cpp"]
+    else:
+        common_win += ["libgodot_windows.cpp"]
+
+    if env.msvc:
+        common_win += ["crash_handler_windows_seh.cpp"]
+    else:
+        common_win += ["crash_handler_windows_signal.cpp"]
 
 common_win_wrap = [
     "console_wrapper_windows.cpp",
@@ -44,7 +56,7 @@ common_win_wrap = [
 
 env_wrap = env.Clone()
 
-if env["arch"] == "x86_64" and env["library_type"] == "executable":
+if env["arch"] == "x86_64" and env["library_type"] == "executable" and not env["uwp"]:
     env_cpp_check = env.Clone()
     env_cpp_check.add_source_files(sources, ["cpu_feature_validation.c"])
     if env.msvc:
@@ -70,20 +82,37 @@ def arrange_program_clean(prog):
 
 
 env["BUILDERS"]["RES"].emitter = redirect_emitter
-if env.editor_build:
+if env["uwp"]:
+    res_file = None
+elif env.editor_build:
     res_file = "godot_res.rc"
     res_target = "godot_res" + env["OBJSUFFIX"]
 else:
     res_file = "godot_res_template.rc"
     res_target = "godot_res_template" + env["OBJSUFFIX"]
-res_obj = env.RES(res_target, res_file)
-env.Depends(res_obj, "#core/version_generated.gen.h")
+if res_file:
+    res_obj = env.RES(res_target, res_file)
+    env.Depends(res_obj, "#core/version_generated.gen.h")
+else:
+    res_obj = []
 
 env.add_source_files(sources, common_win)
 
+if env["uwp"]:
+    # The only translation unit that uses C++/WinRT; it needs C++20 and exceptions.
+    env_uwp_winrt = env.Clone()
+    if "/std:c++17" in env_uwp_winrt["CXXFLAGS"]:
+        env_uwp_winrt["CXXFLAGS"].remove("/std:c++17")
+    env_uwp_winrt.Append(CXXFLAGS=["/std:c++20", "/EHsc"])
+    if "_HAS_EXCEPTIONS" in env_uwp_winrt["CPPDEFINES"]:
+        env_uwp_winrt["CPPDEFINES"].remove("_HAS_EXCEPTIONS")
+    env_uwp_winrt.add_source_files(sources, ["uwp_bridge.cpp"])
+
 env_winrt = env.Clone()
 tts_sources = ["tts_windows.cpp", "tts_driver_sapi.cpp", "winrt_utils.cpp"]
-if env["winrt"]:
+if env["uwp"]:
+    tts_sources = []
+elif env["winrt"]:
     if not env_winrt.msvc:
         if "-std=gnu++17" in env_winrt["CXXFLAGS"]:
             env_winrt["CXXFLAGS"].remove("-std=gnu++17")
@@ -104,7 +133,8 @@ if env["winrt"]:
         env_winrt.Append(CPPPATH=[env["winrt_path"]])
     env_winrt.AppendUnique(CPPDEFINES=["WINRT_ENABLED"])
     tts_sources += ["tts_driver_onecore.cpp"]
-env_winrt.add_source_files(sources, tts_sources)
+if tts_sources:
+    env_winrt.add_source_files(sources, tts_sources)
 
 sources += res_obj
 
@@ -119,12 +149,13 @@ else:
     prog = env.add_program("#bin/godot", sources, PROGSUFFIX=env["PROGSUFFIX"])
 arrange_program_clean(prog)
 
-env.Depends(prog, "godot.manifest")
+if not env["uwp"]:
+    env.Depends(prog, "godot.manifest")
 if env.msvc:
     env.Depends(prog, "godot.natvis")
 
 # Build console wrapper app.
-if env["windows_subsystem"] == "gui":
+if env["windows_subsystem"] == "gui" and not env["uwp"]:
     if env.editor_build:
         res_wrap_file = "godot_res_wrap.rc"
         res_wrap_target = "godot_res_wrap" + env["OBJSUFFIX"]

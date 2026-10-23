@@ -2734,6 +2734,13 @@ RDD::SwapChainID RenderingDeviceDriverD3D12::swap_chain_create(RenderingContextD
 	return SwapChainID(swap_chain);
 }
 
+static HRESULT _create_swap_chain_for_surface(IDXGIFactory2 *p_factory, ID3D12CommandQueue *p_queue, RenderingContextDriverD3D12::Surface *p_surface, const DXGI_SWAP_CHAIN_DESC1 *p_desc, IDXGISwapChain1 **r_swap_chain) {
+	if (p_surface->core_window != nullptr) {
+		return p_factory->CreateSwapChainForCoreWindow(p_queue, p_surface->core_window, p_desc, nullptr, r_swap_chain);
+	}
+	return p_factory->CreateSwapChainForHwnd(p_queue, p_surface->hwnd, p_desc, nullptr, nullptr, r_swap_chain);
+}
+
 Error RenderingDeviceDriverD3D12::swap_chain_resize(CommandQueueID p_cmd_queue, SwapChainID p_swap_chain, uint32_t p_desired_framebuffer_count) {
 	DEV_ASSERT(p_cmd_queue.id != 0);
 	DEV_ASSERT(p_swap_chain.id != 0);
@@ -2828,10 +2835,10 @@ Error RenderingDeviceDriverD3D12::swap_chain_resize(CommandQueueID p_cmd_queue, 
 				has_comp_alpha[(uint64_t)p_cmd_queue.id] = false;
 				create_for_composition = false;
 
-				res = context_driver->dxgi_factory_get()->CreateSwapChainForHwnd(command_queue->d3d_queue.Get(), surface->hwnd, &swap_chain_desc, nullptr, nullptr, swap_chain_1.GetAddressOf());
+				res = _create_swap_chain_for_surface(context_driver->dxgi_factory_get(), command_queue->d3d_queue.Get(), surface, &swap_chain_desc, swap_chain_1.GetAddressOf());
 			}
 		} else {
-			res = context_driver->dxgi_factory_get()->CreateSwapChainForHwnd(command_queue->d3d_queue.Get(), surface->hwnd, &swap_chain_desc, nullptr, nullptr, swap_chain_1.GetAddressOf());
+			res = _create_swap_chain_for_surface(context_driver->dxgi_factory_get(), command_queue->d3d_queue.Get(), surface, &swap_chain_desc, swap_chain_1.GetAddressOf());
 		}
 
 		ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_CANT_CREATE);
@@ -2839,8 +2846,10 @@ Error RenderingDeviceDriverD3D12::swap_chain_resize(CommandQueueID p_cmd_queue, 
 		swap_chain_1.As(&swap_chain->d3d_swap_chain);
 		ERR_FAIL_NULL_V(swap_chain->d3d_swap_chain, ERR_CANT_CREATE);
 
-		res = context_driver->dxgi_factory_get()->MakeWindowAssociation(surface->hwnd, DXGI_MWA_NO_ALT_ENTER | DXGI_MWA_NO_WINDOW_CHANGES);
-		ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_CANT_CREATE);
+		if (surface->hwnd != nullptr) {
+			res = context_driver->dxgi_factory_get()->MakeWindowAssociation(surface->hwnd, DXGI_MWA_NO_ALT_ENTER | DXGI_MWA_NO_WINDOW_CHANGES);
+			ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_CANT_CREATE);
+		}
 	}
 
 	if (swap_chain->color_space != new_color_space) {

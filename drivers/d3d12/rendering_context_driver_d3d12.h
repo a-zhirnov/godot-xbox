@@ -84,12 +84,14 @@ public:
 
 	// Platform-specific data for the Windows embedded in this driver.
 	struct WindowPlatformData {
-		HWND window;
+		HWND window = nullptr;
+		IUnknown *core_window = nullptr; // UWP: Windows::UI::Core::CoreWindow.
 	};
 
 	// D3D12-only methods.
 	struct Surface {
 		HWND hwnd = nullptr;
+		IUnknown *core_window = nullptr;
 		uint32_t width = 0;
 		uint32_t height = 0;
 		DisplayServerEnums::VSyncMode vsync_mode = DisplayServerEnums::VSYNC_ENABLED;

@@ -233,6 +233,7 @@ def get_opts():
         BoolVariable("incremental_link", "Use MSVC incremental linking. May increase or decrease build times.", False),
         BoolVariable("silence_msvc", "Silence MSVC's cl/link stdout bloat, redirecting any errors to stderr.", True),
         BoolVariable("winrt", "Use WinRT API (OneCore TTS support).", True),
+        BoolVariable("uwp", "Build a Universal Windows Platform (UWP/Xbox Dev Mode) executable. MSVC only.", False),
         # Screen reader support.
         (
             "accesskit_sdk_path",
@@ -302,10 +303,13 @@ def configure_msvc(env: "SConsEnvironment"):
     ## Build type
 
     # TODO: Re-evaluate the need for this / streamline with common config.
-    if env["target"] == "template_release" and env["library_type"] == "executable":
+    if env["target"] == "template_release" and env["library_type"] == "executable" and not env["uwp"]:
         env.Append(LINKFLAGS=["/ENTRY:mainCRTStartup"])
 
-    if env["windows_subsystem"] == "gui":
+    if env["uwp"]:
+        # UWP apps are GUI-only AppContainer processes with a wWinMain entry point.
+        env.Append(LINKFLAGS=["/SUBSYSTEM:WINDOWS", "/APPCONTAINER"])
+    elif env["windows_subsystem"] == "gui":
         env.Append(LINKFLAGS=["/SUBSYSTEM:WINDOWS"])
     else:
         env.Append(LINKFLAGS=["/SUBSYSTEM:CONSOLE"])
@@ -414,14 +418,17 @@ def configure_msvc(env: "SConsEnvironment"):
     env.AppendUnique(
         CPPDEFINES=[
             "WINDOWS_ENABLED",
-            "WASAPI_ENABLED",
-            "WINMIDI_ENABLED",
             "TYPED_METHOD_BIND",
             "WIN32",
             ("WINVER", "0x0A00"),
             ("_WIN32_WINNT", "0x0A00"),
         ]
     )
+    if env["uwp"]:
+        # WASAPI (MMDevice) and WinMM MIDI are not available to UWP apps; XAudio2 is.
+        env.AppendUnique(CPPDEFINES=["UWP_ENABLED", "XAUDIO2_ENABLED"])
+    else:
+        env.AppendUnique(CPPDEFINES=["WASAPI_ENABLED", "WINMIDI_ENABLED"])
     env.AppendUnique(CPPDEFINES=["NOMINMAX"])  # disable bogus min/max WinDef.h macros
     if env["arch"] == "x86_64":
         env.AppendUnique(CPPDEFINES=["_WIN64"])
@@ -436,6 +443,23 @@ def configure_msvc(env: "SConsEnvironment"):
         env.Append(LINKFLAGS=["/INFERASANLIBS"])
 
     ## Libs
+
+    if env["uwp"]:
+        # Only link what the UWP API surface provides (WindowsApp.lib is the umbrella import library).
+        vc_tools = os.environ.get("VCToolsInstallDir", "")
+        store_arch = {"x86_64": "x64", "x86_32": "x86", "arm64": "arm64", "arm32": "arm"}[env["arch"]]
+        if vc_tools:
+            env.Prepend(LIBPATH=[os.path.join(vc_tools, "lib", store_arch, "store")])
+        env.Append(
+            LINKFLAGS=[
+                "/NODEFAULTLIB:kernel32.lib",
+                "/NODEFAULTLIB:user32.lib",
+                "/NODEFAULTLIB:gdi32.lib",
+                "/NODEFAULTLIB:advapi32.lib",
+                "/NODEFAULTLIB:shell32.lib",
+                "/NODEFAULTLIB:ole32.lib",
+            ]
+        )
 
     LIBS = [
         "winmm",
@@ -467,7 +491,9 @@ def configure_msvc(env: "SConsEnvironment"):
         "mincore",
     ]
 
-    if env.debug_features:
+    if env["uwp"]:
+        LIBS = ["WindowsApp", "Ws2_32", "bcrypt", "dwrite", "dxguid", "version"]
+    elif env.debug_features:
         LIBS += ["psapi", "dbghelp"]
 
     if env["accesskit"]:
@@ -513,6 +539,8 @@ def configure_msvc(env: "SConsEnvironment"):
 
         env.AppendUnique(CPPDEFINES=["D3D12_ENABLED", "RD_ENABLED"])
         LIBS += ["dxgi", "dxguid"]
+        if env["uwp"]:
+            LIBS += ["d3d12"]  # Linked statically: UWP can't LoadLibrary system DLLs.
         LIBS += ["version"]  # Mesa dependency.
 
         # PIX
@@ -557,7 +585,7 @@ def configure_msvc(env: "SConsEnvironment"):
                 )
                 env["angle"] = False
 
-    if env["target"] in ["editor", "template_debug"]:
+    if env["target"] in ["editor", "template_debug"] and not env["uwp"]:
         LIBS += ["psapi", "dbghelp"]
 
     if env["use_llvm"]:

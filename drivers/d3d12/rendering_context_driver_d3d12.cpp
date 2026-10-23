@@ -92,11 +92,23 @@ Error RenderingContextDriverD3D12::_init_device_factory() {
 	uint32_t agility_sdk_version = GLOBAL_GET("rendering/rendering_device/d3d12/agility_sdk_version");
 	String agility_sdk_path = String(".\\") + Engine::get_singleton()->get_architecture_name();
 
+#ifdef UWP_ENABLED
+	// UWP can't LoadLibrary system DLLs; they are linked statically, so just get their handles.
+	lib_d3d12 = GetModuleHandleW(L"D3D12.dll");
+	ERR_FAIL_NULL_V(lib_d3d12, ERR_CANT_CREATE);
+
+	lib_dxgi = GetModuleHandleW(L"DXGI.dll");
+	ERR_FAIL_NULL_V(lib_dxgi, ERR_CANT_CREATE);
+
+	// No Agility SDK side-loading in UWP: use the system runtime.
+	return OK;
+#else
 	lib_d3d12 = LoadLibraryW(L"D3D12.dll");
 	ERR_FAIL_NULL_V(lib_d3d12, ERR_CANT_CREATE);
 
 	lib_dxgi = LoadLibraryW(L"DXGI.dll");
 	ERR_FAIL_NULL_V(lib_dxgi, ERR_CANT_CREATE);
+#endif
 
 #ifdef DCOMP_ENABLED
 	lib_dcomp = LoadLibraryW(L"Dcomp.dll");
@@ -255,6 +267,7 @@ RenderingContextDriver::SurfaceID RenderingContextDriverD3D12::surface_create(co
 	const WindowPlatformData *wpd = (const WindowPlatformData *)(p_platform_data);
 	Surface *surface = memnew(Surface);
 	surface->hwnd = wpd->window;
+	surface->core_window = wpd->core_window;
 	return SurfaceID(surface);
 }
 

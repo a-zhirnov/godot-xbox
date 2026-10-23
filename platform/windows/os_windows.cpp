@@ -30,7 +30,12 @@
 
 #include "os_windows.h"
 
+#ifdef UWP_ENABLED
+#include "display_server_uwp.h"
+#include "uwp_bridge.h"
+#else
 #include "display_server_windows.h"
+#endif
 #include "lang_table.h"
 #include "windows_terminal_logger.h"
 #include "windows_utils.h"
@@ -2415,6 +2420,9 @@ uint64_t OS_Windows::get_embedded_pck_offset() const {
 }
 
 String OS_Windows::get_config_path() const {
+#ifdef UWP_ENABLED
+	return String::utf16((const char16_t *)uwp::get_local_dir()).replace_char('\\', '/').trim_suffix("/");
+#endif
 	if (has_environment("APPDATA")) {
 		return get_environment("APPDATA").replace_char('\\', '/');
 	}
@@ -2427,6 +2435,12 @@ String OS_Windows::get_data_path() const {
 
 String OS_Windows::get_cache_path() const {
 	static String cache_path_cache;
+#ifdef UWP_ENABLED
+	if (cache_path_cache.is_empty()) {
+		cache_path_cache = get_config_path();
+	}
+	return cache_path_cache;
+#endif
 	if (cache_path_cache.is_empty()) {
 		if (has_environment("LOCALAPPDATA")) {
 			cache_path_cache = get_environment("LOCALAPPDATA").replace_char('\\', '/');
@@ -2616,11 +2630,19 @@ void OS_Windows::add_frame_delay(bool p_can_draw, bool p_wake_for_events) {
 		}
 
 		DisplayServer *ds = DisplayServer::get_singleton();
+#ifdef UWP_ENABLED
+		if (Object::cast_to<DisplayServerUWP>(ds)) {
+			// Window events are polled every frame; just sleep for the requested time.
+			Sleep((DWORD)Math::floor(double(delay) / 1000.0));
+			return;
+		}
+#else
 		DisplayServerWindows *ds_win = Object::cast_to<DisplayServerWindows>(ds);
 		if (ds_win) {
 			MsgWaitForMultipleObjects(0, nullptr, false, Math::floor(double(delay) / 1000.0), QS_ALLINPUT);
 			return;
 		}
+#endif
 	}
 
 	const uint32_t frame_delay = Engine::get_singleton()->get_frame_delay();
@@ -2875,8 +2897,10 @@ LPVOID install_iat_hook(const String &p_target, const String &p_module, const St
 OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 	hInstance = _hInstance;
 
+#ifndef UWP_ENABLED
 	Original_GetProcAddress = (GetProcAddressType)install_iat_hook("dinput8.dll", "kernel32.dll", "GetProcAddress", (LPVOID)Hook_GetProcAddress);
 	Original_HidD_GetProductString = (HidD_GetProductStringType)install_iat_hook("dinput8.dll", "hid.dll", "HidD_GetProductString", (LPVOID)Hook_HidD_GetProductString);
+#endif
 
 	_init_encodings();
 
@@ -2893,12 +2917,14 @@ OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 
 	SetCurrentDirectoryW((LPCWSTR)new_current_dir_name.get_data());
 
+#ifndef UWP_ENABLED
 #ifndef WINDOWS_SUBSYSTEM_CONSOLE
 	RedirectIOToConsole();
 #endif
 
 	SetConsoleOutputCP(CP_UTF8);
 	SetConsoleCP(CP_UTF8);
+#endif
 
 	CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
@@ -2909,13 +2935,18 @@ OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 	AudioDriverManager::add_driver(&driver_xaudio2);
 #endif
 
+#ifdef UWP_ENABLED
+	DisplayServerUWP::register_uwp_driver();
+#else
 	DisplayServerWindows::register_windows_driver();
+#endif
 
 	// Enable ANSI escape code support on Windows 10 v1607 (Anniversary Update) and later.
 	// This lets the engine and projects use ANSI escape codes to color text just like on macOS and Linux.
 	//
 	// NOTE: The engine does not use ANSI escape codes to color error/warning messages; it uses Windows API calls instead.
 	// Therefore, error/warning messages are still colored on Windows versions older than 10.
+#ifndef UWP_ENABLED
 	HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
 	DWORD outMode = 0;
 	GetConsoleMode(stdoutHandle, &outMode);
@@ -2924,6 +2955,7 @@ OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 		// Windows 10 prior to Anniversary Update.
 		print_verbose("Can't set the ENABLE_VIRTUAL_TERMINAL_PROCESSING Windows console mode. `print_rich()` will not work as expected.");
 	}
+#endif
 
 	Vector<Logger *> loggers;
 	loggers.push_back(memnew(WindowsTerminalLogger));
