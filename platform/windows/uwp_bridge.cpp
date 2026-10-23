@@ -46,6 +46,8 @@
 #include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 
+#include <windows.h>
+
 #include <deque>
 #include <string>
 
@@ -66,6 +68,48 @@ int (*g_main)() = nullptr;
 int g_exit_code = 0;
 std::wstring g_install_dir;
 std::wstring g_local_dir;
+
+// Diagnostics for a console without a debugger: appends to <TempState>\\uwp_diag.log.
+void _diag(const std::string &p_message) {
+	wchar_t temp[MAX_PATH + 2];
+	DWORD len = GetTempPathW(MAX_PATH, temp);
+	if (len == 0 || len > MAX_PATH) {
+		return;
+	}
+	std::wstring path(temp, len);
+	path += L"uwp_diag.log";
+	HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	std::string line = p_message + "\r\n";
+	DWORD written = 0;
+	WriteFile(file, line.data(), (DWORD)line.size(), &written, nullptr);
+	CloseHandle(file);
+}
+
+LONG CALLBACK _vectored_handler(PEXCEPTION_POINTERS p_info) {
+	static int logged = 0;
+	const DWORD code = p_info->ExceptionRecord->ExceptionCode;
+	// Skip the noisy, benign ones (C++ throws, debugger prints, thread naming).
+	if (code == 0xE06D7363 || code == 0x40010006 || code == 0x406D1388 || code == 0x4001000A || logged >= 20) {
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+	logged++;
+	void *address = p_info->ExceptionRecord->ExceptionAddress;
+	HMODULE module = nullptr;
+	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)address, &module);
+	wchar_t name[MAX_PATH] = {};
+	if (module) {
+		GetModuleFileNameW(module, name, MAX_PATH);
+	}
+	char buffer[600];
+	char narrow[300] = {};
+	WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+	snprintf(buffer, sizeof(buffer), "EXCEPTION code=0x%08lX address=%p module=%s offset=0x%llX", code, address, narrow, (unsigned long long)((char *)address - (char *)module));
+	_diag(buffer);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
 
 float _scale() {
 	try {
@@ -113,6 +157,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 	}
 
 	void Initialize(CoreApplicationView const &p_view) {
+		_diag("App::Initialize");
 		p_view.Activated([](CoreApplicationView const &, auto const &) {
 			CoreWindow::GetForCurrentThread().Activate();
 		});
@@ -123,6 +168,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 	void Uninitialize() {}
 
 	void SetWindow(CoreWindow const &p_window) {
+		_diag("App::SetWindow");
 		g_window = p_window;
 
 		p_window.PointerPressed([](CoreWindow const &, PointerEventArgs const &a) { _push_pointer(uwp::EventType::POINTER_DOWN, a); });
@@ -173,6 +219,7 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 	}
 
 	void Run() {
+		_diag("App::Run begin");
 		try {
 			g_install_dir = std::wstring(Windows::ApplicationModel::Package::Current().InstalledLocation().Path().c_str()) + L"\\";
 			g_local_dir = std::wstring(Windows::Storage::ApplicationData::Current().LocalFolder().Path().c_str()) + L"\\";
@@ -192,7 +239,9 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 		}
 
 		g_window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+		_diag("App::Run calling main");
 		g_exit_code = g_main();
+		_diag("App::Run main returned");
 	}
 };
 
@@ -202,7 +251,16 @@ namespace uwp {
 
 int run(int (*p_main)()) {
 	g_main = p_main;
-	CoreApplication::Run(make<App>());
+	AddVectoredExceptionHandler(1, _vectored_handler);
+	_diag("uwp::run entered");
+	try {
+		CoreApplication::Run(make<App>());
+	} catch (hresult_error const &e) {
+		char buffer[400];
+		snprintf(buffer, sizeof(buffer), "CoreApplication::Run threw hresult 0x%08X", (unsigned)e.code().value);
+		_diag(buffer);
+	}
+	_diag("uwp::run returning");
 	return g_exit_code;
 }
 
