@@ -257,6 +257,37 @@ BOOL WINAPI redirected_VirtualProtect(LPVOID p_address, SIZE_T p_size, DWORD p_p
 	return ok;
 }
 
+// Sections the JIT maps executable (CreateFileMapping + MapViewOfFile with FILE_MAP_EXECUTE)
+// need the FromApp variants too.
+HANDLE WINAPI redirected_CreateFileMappingW(HANDLE p_file, LPSECURITY_ATTRIBUTES p_security, DWORD p_protect, DWORD p_size_high, DWORD p_size_low, LPCWSTR p_name) {
+	return CreateFileMappingFromApp(p_file, p_security, p_protect, ((ULONG64)p_size_high << 32) | p_size_low, p_name);
+}
+
+LPVOID WINAPI redirected_MapViewOfFile(HANDLE p_mapping, DWORD p_access, DWORD p_offset_high, DWORD p_offset_low, SIZE_T p_size) {
+	return MapViewOfFileFromApp(p_mapping, p_access, ((ULONG64)p_offset_high << 32) | p_offset_low, p_size);
+}
+
+ULONG page_protection_for(DWORD p_access) {
+	const bool execute = p_access & FILE_MAP_EXECUTE;
+	const bool write = (p_access & FILE_MAP_WRITE) || (p_access & FILE_MAP_ALL_ACCESS) == FILE_MAP_ALL_ACCESS;
+	if (p_access & FILE_MAP_COPY) {
+		return execute ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
+	}
+	if (write) {
+		return execute ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+	}
+	return execute ? PAGE_EXECUTE_READ : PAGE_READONLY;
+}
+
+LPVOID WINAPI redirected_MapViewOfFileEx(HANDLE p_mapping, DWORD p_access, DWORD p_offset_high, DWORD p_offset_low, SIZE_T p_size, LPVOID p_base) {
+	const ULONG64 offset = ((ULONG64)p_offset_high << 32) | p_offset_low;
+	if (!p_base) {
+		return MapViewOfFileFromApp(p_mapping, p_access, offset, p_size);
+	}
+	// The only FromApp call that maps at a chosen address.
+	return MapViewOfFile3FromApp(p_mapping, GetCurrentProcess(), p_base, offset, p_size, 0, page_protection_for(p_access), nullptr, 0);
+}
+
 struct Redirect {
 	const char *name;
 	void *to;
@@ -276,6 +307,9 @@ const Redirect redirects[] = {
 	{ "MoveFileExW", (void *)&redirected_MoveFileExW },
 	{ "VirtualAlloc", (void *)&redirected_VirtualAlloc },
 	{ "VirtualProtect", (void *)&redirected_VirtualProtect },
+	{ "CreateFileMappingW", (void *)&redirected_CreateFileMappingW },
+	{ "MapViewOfFile", (void *)&redirected_MapViewOfFile },
+	{ "MapViewOfFileEx", (void *)&redirected_MapViewOfFileEx },
 };
 
 } // namespace
