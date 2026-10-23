@@ -36,6 +36,7 @@
 #include "main/main.h"
 
 #include <clocale>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -51,17 +52,26 @@ static std::string wide_to_utf8(const wchar_t *p_wide) {
 }
 
 // Appends a line to <LocalState>\\uwp_boot.log; the only diagnostics available on a console without a debugger.
+// One log per run (truncated at start, so it never grows), opened once and written with a
+// timestamp: the per-line open/close of earlier builds slowed start-up noticeably.
 static void boot_log(const char *p_message) {
-	std::wstring path = uwp::get_local_dir();
-	path += L"uwp_boot.log";
-	HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	static std::mutex lock;
+	static HANDLE file = INVALID_HANDLE_VALUE;
+	static ULONGLONG started = GetTickCount64();
+	std::lock_guard<std::mutex> guard(lock);
 	if (file == INVALID_HANDLE_VALUE) {
-		return;
+		std::wstring path = uwp::get_local_dir();
+		path += L"uwp_boot.log";
+		file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (file == INVALID_HANDLE_VALUE) {
+			return;
+		}
 	}
-	std::string line = std::string(p_message) + "\r\n";
+	char stamp[32];
+	snprintf(stamp, sizeof(stamp), "[%7.2f] ", (GetTickCount64() - started) / 1000.0);
+	std::string line = std::string(stamp) + p_message + "\r\n";
 	DWORD written = 0;
 	WriteFile(file, line.data(), (DWORD)line.size(), &written, nullptr);
-	CloseHandle(file);
 }
 
 class UwpBootLogger : public Logger {
