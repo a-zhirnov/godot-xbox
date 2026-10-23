@@ -117,6 +117,12 @@ LONG CALLBACK _vectored_handler(PEXCEPTION_POINTERS p_info) {
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// On Xbox every gamepad press is also delivered as a CoreWindow key (VK_GAMEPAD_*, VK_NAVIGATION_*).
+// Feeding both into the engine doubles the input and makes it flip between keyboard and gamepad.
+bool _is_gamepad_key(int32_t p_vk) {
+	return (p_vk >= 0x88 && p_vk <= 0x8F) || (p_vk >= 0xC3 && p_vk <= 0xDA);
+}
+
 float _scale() {
 	try {
 		return (float)DisplayInformation::GetForCurrentView().RawPixelsPerViewPixel();
@@ -192,6 +198,10 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 		p_window.PointerWheelChanged([](CoreWindow const &, PointerEventArgs const &a) { _push_pointer(uwp::EventType::POINTER_WHEEL, a); });
 
 		p_window.KeyDown([](CoreWindow const &, KeyEventArgs const &a) {
+			if (_is_gamepad_key((int32_t)a.VirtualKey())) {
+				a.Handled(true); // Gamepad input comes through Windows.Gaming.Input only.
+				return;
+			}
 			uwp::Event e;
 			e.type = uwp::EventType::KEY_DOWN;
 			e.a = (int32_t)a.VirtualKey();
@@ -200,6 +210,10 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
 			_push(e);
 		});
 		p_window.KeyUp([](CoreWindow const &, KeyEventArgs const &a) {
+			if (_is_gamepad_key((int32_t)a.VirtualKey())) {
+				a.Handled(true);
+				return;
+			}
 			uwp::Event e;
 			e.type = uwp::EventType::KEY_UP;
 			e.a = (int32_t)a.VirtualKey();

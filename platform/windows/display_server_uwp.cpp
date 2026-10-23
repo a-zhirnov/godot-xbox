@@ -270,12 +270,20 @@ void DisplayServerUWP::_process_gamepads() {
 		}
 
 		// Windows.Gaming.Input reports +1 as "up" on Y axes; Godot expects +1 as "down".
-		input->joy_axis(i, JoyAxis::LEFT_X, cur.left_x);
-		input->joy_axis(i, JoyAxis::LEFT_Y, -cur.left_y);
-		input->joy_axis(i, JoyAxis::RIGHT_X, cur.right_x);
-		input->joy_axis(i, JoyAxis::RIGHT_Y, -cur.right_y);
-		input->joy_axis(i, JoyAxis::TRIGGER_LEFT, cur.left_trigger);
-		input->joy_axis(i, JoyAxis::TRIGGER_RIGHT, cur.right_trigger);
+		// Sticks rest a little off zero: apply a dead zone and only send real changes, otherwise the
+		// constant noise makes the game think the stick is always moving.
+		const float values[6] = { cur.left_x, -cur.left_y, cur.right_x, -cur.right_y, cur.left_trigger, cur.right_trigger };
+		const JoyAxis axes[6] = { JoyAxis::LEFT_X, JoyAxis::LEFT_Y, JoyAxis::RIGHT_X, JoyAxis::RIGHT_Y, JoyAxis::TRIGGER_LEFT, JoyAxis::TRIGGER_RIGHT };
+		for (int a = 0; a < 6; a++) {
+			float v = values[a];
+			if (Math::abs(v) < (a < 4 ? 0.15f : 0.05f)) {
+				v = 0.0f;
+			}
+			if (!prev.connected || Math::abs(v - last_axis[i][a]) > 0.01f) {
+				last_axis[i][a] = v;
+				input->joy_axis(i, axes[a], v);
+			}
+		}
 
 		gamepads[i] = cur;
 	}

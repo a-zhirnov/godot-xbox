@@ -62,6 +62,7 @@ class DisplayServerUWP : public DisplayServerHeadless {
 	DisplayServerEnums::VSyncMode vsync_mode = DisplayServerEnums::VSYNC_ENABLED;
 
 	uwp::GamepadState gamepads[uwp::MAX_GAMEPADS];
+	float last_axis[uwp::MAX_GAMEPADS][6] = {};
 
 	void _handle_event(const uwp::Event &p_event);
 	void _process_gamepads();
