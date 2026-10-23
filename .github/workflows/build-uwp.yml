@@ -67,7 +67,7 @@ jobs:
             "module_openxr_enabled=no", "module_mono_enabled=no", "module_mobile_vr_enabled=no",
             "-j4")
           if ("${{ inputs.quick }}" -eq "true") {
-            $flags += @("-k", "bin/obj/platform/windows", "bin/obj/drivers/windows", "bin/obj/drivers/d3d12", "bin/obj/drivers/xaudio2")
+            $flags += @("-k", "bin/obj/platform/windows", "bin/obj/drivers/windows", "bin/obj/drivers/d3d12", "bin/obj/drivers/xaudio2", "bin/obj/modules/libretro")
           }
           scons @flags
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
