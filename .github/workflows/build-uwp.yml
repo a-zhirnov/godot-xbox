@@ -55,7 +55,7 @@ jobs:
           $flags = @(
             "platform=windows", "uwp=yes", "target=template_release", "arch=x86_64",
             "d3d12=yes", "vulkan=no", "opengl3=no", "angle=no", "sdl=no", "xaudio2=yes", "accesskit=no", "winrt=no",
-            "use_static_cpp=yes", "lto=none", "debug_symbols=no",
+            "use_static_cpp=no", "lto=none", "debug_symbols=no",
             "module_camera_enabled=no", "module_upnp_enabled=no", "module_webrtc_enabled=no",
             "module_openxr_enabled=no", "module_mono_enabled=no", "module_mobile_vr_enabled=no",
             "-j4")
