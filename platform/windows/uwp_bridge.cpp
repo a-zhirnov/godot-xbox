@@ -40,6 +40,8 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Gaming.Input.h>
 #include <winrt/Windows.Graphics.Display.h>
+#include <winrt/Windows.Storage.AccessCache.h>
+#include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
@@ -49,6 +51,7 @@
 #include <windows.h>
 
 #include <deque>
+#include <mutex>
 #include <string>
 
 using namespace winrt;
@@ -64,6 +67,8 @@ namespace {
 
 CoreWindow g_window{ nullptr };
 std::deque<uwp::Event> g_events;
+std::mutex g_events_lock; // Picker completions arrive on a background thread.
+std::wstring g_picked;
 int (*g_main)() = nullptr;
 int g_exit_code = 0;
 std::wstring g_install_dir;
@@ -132,7 +137,19 @@ float _scale() {
 }
 
 void _push(const uwp::Event &p_event) {
+	std::lock_guard<std::mutex> guard(g_events_lock);
 	g_events.push_back(p_event);
+}
+
+void _push_picked(const std::wstring &p_path) {
+	{
+		std::lock_guard<std::mutex> guard(g_events_lock);
+		g_picked = p_path;
+	}
+	uwp::Event e;
+	e.type = uwp::EventType::PICKED;
+	e.a = p_path.empty() ? 0 : 1;
+	_push(e);
 }
 
 int _button_from_kind(PointerUpdateKind p_kind) {
@@ -315,6 +332,7 @@ void process_events() {
 }
 
 bool poll_event(Event &r_event) {
+	std::lock_guard<std::mutex> guard(g_events_lock);
 	if (g_events.empty()) {
 		return false;
 	}
@@ -360,6 +378,68 @@ int poll_gamepads(GamepadState r_states[MAX_GAMEPADS]) {
 
 const wchar_t *get_install_dir() {
 	return g_install_dir.c_str();
+}
+
+void pick_folder() {
+	try {
+		Windows::Storage::Pickers::FolderPicker picker;
+		picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::ComputerFolder);
+		picker.FileTypeFilter().Append(L"*");
+		picker.PickSingleFolderAsync().Completed([](auto const &op, AsyncStatus status) {
+			std::wstring path;
+			if (status == AsyncStatus::Completed) {
+				Windows::Storage::StorageFolder folder = op.GetResults();
+				if (folder) {
+					// Keep access across launches, and let emulators open files from it later.
+					Windows::Storage::AccessCache::StorageApplicationPermissions::FutureAccessList().Add(folder);
+					path = folder.Path().c_str();
+				}
+			}
+			_push_picked(path);
+		});
+	} catch (hresult_error const &e) {
+		_diag("pick_folder failed: " + winrt::to_string(e.message()));
+		_push_picked(L"");
+	}
+}
+
+void pick_file() {
+	try {
+		Windows::Storage::Pickers::FileOpenPicker picker;
+		picker.SuggestedStartLocation(Windows::Storage::Pickers::PickerLocationId::ComputerFolder);
+		picker.FileTypeFilter().Append(L"*");
+		picker.PickSingleFileAsync().Completed([](auto const &op, AsyncStatus status) {
+			std::wstring path;
+			if (status == AsyncStatus::Completed) {
+				Windows::Storage::StorageFile file = op.GetResults();
+				if (file) {
+					Windows::Storage::AccessCache::StorageApplicationPermissions::FutureAccessList().Add(file);
+					path = file.Path().c_str();
+				}
+			}
+			_push_picked(path);
+		});
+	} catch (hresult_error const &e) {
+		_diag("pick_file failed: " + winrt::to_string(e.message()));
+		_push_picked(L"");
+	}
+}
+
+const wchar_t *picked_path() {
+	std::lock_guard<std::mutex> guard(g_events_lock);
+	return g_picked.c_str();
+}
+
+bool launch_uri(const wchar_t *p_uri) {
+	try {
+		Windows::Foundation::Uri uri{ hstring(p_uri) };
+		_diag("launch_uri: " + winrt::to_string(uri.AbsoluteUri()));
+		Windows::System::Launcher::LaunchUriAsync(uri);
+		return true;
+	} catch (hresult_error const &e) {
+		_diag("launch_uri failed: " + winrt::to_string(e.message()));
+		return false;
+	}
 }
 
 const wchar_t *get_local_dir() {

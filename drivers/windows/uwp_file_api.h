@@ -40,6 +40,7 @@
 #include <fcntl.h>
 #include <fileapifromapp.h>
 #include <io.h>
+#include <share.h>
 #include <stdio.h>
 #include <wchar.h>
 

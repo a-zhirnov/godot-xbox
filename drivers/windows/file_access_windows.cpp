@@ -43,6 +43,8 @@
 #include <sys/types.h>
 #include <tchar.h>
 
+#include "uwp_file_api.h"
+
 #include <cerrno>
 #include <cwchar>
 

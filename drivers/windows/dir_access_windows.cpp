@@ -42,6 +42,8 @@
 #include <cstdio>
 #include <cwchar>
 
+#include "uwp_file_api.h"
+
 typedef struct _NT_IO_STATUS_BLOCK {
 	union {
 		LONG Status;

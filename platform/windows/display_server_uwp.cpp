@@ -116,6 +116,29 @@ void DisplayServerUWP::_dispatch_input_events(const Ref<InputEvent> &p_event) {
 	}
 }
 
+bool DisplayServerUWP::has_feature(DisplayServerEnums::Feature p_feature) const {
+	return p_feature == DisplayServerEnums::FEATURE_NATIVE_DIALOG_FILE;
+}
+
+Error DisplayServerUWP::file_dialog_show(const String &p_title, const String &p_current_directory, const String &p_filename, bool p_show_hidden, DisplayServerEnums::FileDialogMode p_mode, const Vector<String> &p_filters, const Callable &p_callback, DisplayServerEnums::WindowID p_window_id) {
+	if (dialog_callback.is_valid()) {
+		return ERR_BUSY;
+	}
+	switch (p_mode) {
+		case DisplayServerEnums::FILE_DIALOG_MODE_OPEN_DIR:
+			dialog_callback = p_callback;
+			uwp::pick_folder();
+			return OK;
+		case DisplayServerEnums::FILE_DIALOG_MODE_OPEN_FILE:
+		case DisplayServerEnums::FILE_DIALOG_MODE_OPEN_FILES:
+			dialog_callback = p_callback;
+			uwp::pick_file();
+			return OK;
+		default:
+			return ERR_UNAVAILABLE;
+	}
+}
+
 Vector<DisplayServerEnums::WindowID> DisplayServerUWP::get_window_list() const {
 	Vector<DisplayServerEnums::WindowID> list;
 	list.push_back(DisplayServerEnums::MAIN_WINDOW_ID);
@@ -234,6 +257,19 @@ void DisplayServerUWP::_handle_event(const uwp::Event &p_event) {
 			}
 			if (rect_changed_callback.is_valid()) {
 				rect_changed_callback.call(Rect2i(Point2i(), window_size));
+			}
+		} break;
+
+		case uwp::EventType::PICKED: {
+			Callable callback = dialog_callback;
+			dialog_callback = Callable();
+			if (callback.is_valid()) {
+				Vector<String> files;
+				if (p_event.a != 0) {
+					files.push_back(String::utf16((const char16_t *)uwp::picked_path()).replace_char('\\', '/'));
+				}
+				print_verbose(vformat("UWP: picker returned %s", files.is_empty() ? String("<cancelled>") : files[0]));
+				callback.call_deferred(p_event.a != 0, files, 0);
 			}
 		} break;
 

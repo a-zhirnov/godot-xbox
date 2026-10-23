@@ -2229,7 +2229,8 @@ OS_Windows::StdHandleType OS_Windows::get_stderr_type() const {
 
 #ifdef UWP_ENABLED
 Error OS_Windows::shell_open(const String &p_uri) {
-	return ERR_UNAVAILABLE;
+	// Protocol activation is how UWP apps start each other (emulators: "xbsx2:?cmd=...").
+	return uwp::launch_uri((LPCWSTR)p_uri.utf16().get_data()) ? OK : ERR_CANT_OPEN;
 }
 #else
 Error OS_Windows::shell_open(const String &p_uri) {
@@ -2597,6 +2598,12 @@ bool OS_Windows::_check_internal_feature_support(const String &p_feature) {
 	if (p_feature == "pc") {
 		return true;
 	}
+#ifdef UWP_ENABLED
+	// Lets game scripts tell the console apart from desktop Windows: OS.has_feature("xbox").
+	if (p_feature == "uwp" || p_feature == "xbox") {
+		return true;
+	}
+#endif
 
 	return false;
 }

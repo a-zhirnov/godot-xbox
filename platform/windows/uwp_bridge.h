@@ -49,6 +49,7 @@ enum class EventType : int32_t {
 	FOCUS, // a = 1 gained, 0 lost.
 	SIZE, // a/b = new size in pixels.
 	CLOSE,
+	PICKED, // a = 1 if something was picked, 0 if cancelled; path via picked_path().
 };
 
 struct Event {
@@ -96,5 +97,15 @@ int poll_gamepads(GamepadState r_states[MAX_GAMEPADS]);
 const wchar_t *get_install_dir();
 // Writable local-state directory (with trailing backslash), UTF-16.
 const wchar_t *get_local_dir();
+
+// System pickers (full-screen, gamepad-friendly on Xbox). The result arrives as a PICKED event.
+void pick_folder();
+void pick_file();
+// Path of the last PICKED event, UTF-16 (empty when cancelled).
+const wchar_t *picked_path();
+
+// Opens a URI (e.g. an emulator protocol link such as "xbsx2:?cmd=..."). Returns false if it
+// could not be started.
+bool launch_uri(const wchar_t *p_uri);
 
 } // namespace uwp

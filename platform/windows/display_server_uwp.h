@@ -53,6 +53,7 @@ class DisplayServerUWP : public DisplayServerHeadless {
 	Callable input_event_callback;
 	Callable window_event_callback;
 	Callable rect_changed_callback;
+	Callable dialog_callback;
 	ObjectID instance_id;
 
 	Size2i window_size;
@@ -73,6 +74,10 @@ public:
 	static void register_uwp_driver();
 
 	String get_name() const override { return "uwp"; }
+	bool has_feature(DisplayServerEnums::Feature p_feature) const override;
+
+	// System folder/file pickers; save dialogs are not available on UWP.
+	Error file_dialog_show(const String &p_title, const String &p_current_directory, const String &p_filename, bool p_show_hidden, DisplayServerEnums::FileDialogMode p_mode, const Vector<String> &p_filters, const Callable &p_callback, DisplayServerEnums::WindowID p_window_id) override;
 
 	int get_screen_count() const override { return 1; }
 	int get_primary_screen() const override { return 0; }
