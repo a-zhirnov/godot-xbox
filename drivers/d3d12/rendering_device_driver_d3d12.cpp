@@ -2412,7 +2412,18 @@ RDD::FenceID RenderingDeviceDriverD3D12::fence_create() {
 Error RenderingDeviceDriverD3D12::fence_wait(FenceID p_fence) {
 	FenceInfo *fence = (FenceInfo *)(p_fence.id);
 	fence->d3d_fence->SetEventOnCompletion(fence->fence_value, fence->event_handle);
+#ifdef UWP_ENABLED
+	// A wait that never ends froze Socket now and then on Xbox. Say where the GPU stands when it
+	// takes too long: stuck short of the value (hung, or a signal never queued) or removed.
+	DWORD res = WaitForSingleObjectEx(fence->event_handle, 3000, FALSE);
+	if (res == WAIT_TIMEOUT) {
+		ERR_PRINT(vformat("D3D12: fence wait over 3 s: waiting for %d, GPU at %d, device %s.", (int64_t)fence->fence_value,
+				(int64_t)fence->d3d_fence->GetCompletedValue(), vformat("0x%08ux", (uint64_t)device->GetDeviceRemovedReason())));
+		res = WaitForSingleObjectEx(fence->event_handle, INFINITE, FALSE);
+	}
+#else
 	DWORD res = WaitForSingleObjectEx(fence->event_handle, INFINITE, FALSE);
+#endif
 #ifdef PIX_ENABLED
 	PIXNotifyWakeFromFenceSignal(fence->event_handle);
 #endif
