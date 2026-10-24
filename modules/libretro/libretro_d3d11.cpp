@@ -230,7 +230,11 @@ HANDLE WINAPI redirected_CreateFileW(LPCWSTR p_name, DWORD p_access, DWORD p_sha
 	if (plain_error == ERROR_FILE_NOT_FOUND || plain_error == ERROR_PATH_NOT_FOUND || plain_error == ERROR_FILE_EXISTS) {
 		return handle;
 	}
+	// The broker refuses (4252) what the CRT's _wfopen passes along: security attributes and QoS
+	// flags. Godot's own brokered calls pass neither and reach USB drives fine.
 	params.dwSecurityQosFlags = 0;
+	params.lpSecurityAttributes = nullptr;
+	params.hTemplateFile = nullptr;
 	handle = CreateFile2FromAppW(WindowsPath(p_name).get(), p_access, p_share, p_disposition, &params);
 	if (handle == INVALID_HANDLE_VALUE) {
 		const DWORD error = GetLastError();
