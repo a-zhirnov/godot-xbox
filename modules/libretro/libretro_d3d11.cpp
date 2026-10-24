@@ -236,6 +236,13 @@ HANDLE WINAPI redirected_CreateFileW(LPCWSTR p_name, DWORD p_access, DWORD p_sha
 	params.lpSecurityAttributes = nullptr;
 	params.hTemplateFile = nullptr;
 	handle = CreateFile2FromAppW(WindowsPath(p_name).get(), p_access, p_share, p_disposition, &params);
+	if (handle == INVALID_HANDLE_VALUE && GetLastError() == ERROR_NOT_SUPPORTED_IN_APPCONTAINER) {
+		// Still refused: try the plainest request that can serve it (no attributes or flags).
+		CREATEFILE2_EXTENDED_PARAMETERS plain = {};
+		plain.dwSize = sizeof(plain);
+		handle = CreateFile2FromAppW(WindowsPath(p_name).get(), p_access & (GENERIC_READ | GENERIC_WRITE), p_share, p_disposition, &plain);
+		print_line(vformat("uwp-redirect: CreateFileW(%s) retried without flags: %s", String(p_name), handle != INVALID_HANDLE_VALUE ? "ok" : itos(GetLastError())));
+	}
 	if (handle == INVALID_HANDLE_VALUE) {
 		const DWORD error = GetLastError();
 		print_line(vformat("uwp-redirect: CreateFileW(%s, access %x, share %x, disposition %d, flags %x) failed: plain %d, brokered %d", String(p_name), (int)p_access, (int)p_share, (int)p_disposition, (int)p_flags, (int)plain_error, (int)error));
