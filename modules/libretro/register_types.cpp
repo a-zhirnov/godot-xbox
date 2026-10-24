@@ -32,6 +32,7 @@
 
 #include "libretro_core.h"
 #include "switch_core.h"
+#include "xbox_apps.h"
 
 #include "core/object/class_db.h"
 
@@ -41,6 +42,7 @@ void initialize_libretro_module(ModuleInitializationLevel p_level) {
 	}
 	GDREGISTER_CLASS(LibretroCore);
 	GDREGISTER_CLASS(SwitchCore);
+	GDREGISTER_CLASS(XboxApps);
 }
 
 void uninitialize_libretro_module(ModuleInitializationLevel p_level) {

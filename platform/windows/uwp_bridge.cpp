@@ -33,6 +33,8 @@
 
 #include "uwp_bridge.h"
 
+#include <map>
+
 #include <winrt/Windows.ApplicationModel.Activation.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.ApplicationModel.h>
@@ -43,6 +45,8 @@
 #include <winrt/Windows.Storage.AccessCache.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Management.Deployment.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
@@ -448,6 +452,72 @@ void activate_window() {
 	_diag("activate_window");
 	g_window.Activate();
 	g_window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+}
+
+// AppListEntry objects from the last list_apps(), by AppUserModelId, for launch_app().
+std::mutex g_apps_mutex;
+std::map<std::wstring, Windows::ApplicationModel::Core::AppListEntry> g_apps;
+
+std::vector<AppEntry> list_apps() {
+	std::vector<AppEntry> out;
+	std::map<std::wstring, Windows::ApplicationModel::Core::AppListEntry> found;
+	try {
+		const hstring self = Windows::ApplicationModel::Package::Current().Id().FamilyName();
+		Windows::Management::Deployment::PackageManager manager;
+		for (auto const &package : manager.FindPackagesForUser(L"")) {
+			try {
+				if (package.IsFramework() || package.IsResourcePackage() || package.IsBundle()) {
+					continue;
+				}
+				if (package.SignatureKind() == Windows::ApplicationModel::PackageSignatureKind::System || package.Id().FamilyName() == self) {
+					continue;
+				}
+				for (auto const &entry : package.GetAppListEntries()) {
+					AppEntry app;
+					app.id = entry.AppUserModelId().c_str();
+					app.name = entry.DisplayInfo().DisplayName().c_str();
+					if (app.id.empty() || app.name.empty()) {
+						continue;
+					}
+					try {
+						auto stream = entry.DisplayInfo().GetLogo(Windows::Foundation::Size{ 150, 150 }).OpenReadAsync().get();
+						const uint32_t size = (uint32_t)stream.Size();
+						Windows::Storage::Streams::DataReader reader(stream);
+						reader.LoadAsync(size).get();
+						app.logo.resize(size);
+						reader.ReadBytes(app.logo);
+					} catch (...) {
+						app.logo.clear(); // shown without a logo
+					}
+					found.emplace(app.id, entry);
+					out.push_back(std::move(app));
+				}
+			} catch (...) {
+				// a package that can't be read (being updated, removed): skip it
+			}
+		}
+	} catch (hresult_error const &e) {
+		_diag("list_apps failed: " + winrt::to_string(e.message()));
+	}
+	std::lock_guard<std::mutex> lock(g_apps_mutex);
+	g_apps = std::move(found);
+	return out;
+}
+
+bool launch_app(const wchar_t *p_id) {
+	std::lock_guard<std::mutex> lock(g_apps_mutex);
+	auto it = g_apps.find(p_id);
+	if (it == g_apps.end()) {
+		return false;
+	}
+	try {
+		_diag("launch_app: " + winrt::to_string(hstring(p_id)));
+		it->second.LaunchAsync();
+		return true;
+	} catch (hresult_error const &e) {
+		_diag("launch_app failed: " + winrt::to_string(e.message()));
+		return false;
+	}
 }
 
 bool launch_uri(const wchar_t *p_uri) {

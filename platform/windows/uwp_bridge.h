@@ -36,6 +36,9 @@
 
 #include <cstdint>
 
+#include <string>
+#include <vector>
+
 namespace uwp {
 
 enum class EventType : int32_t {
@@ -107,6 +110,18 @@ const wchar_t *picked_path();
 // Opens a URI (e.g. an emulator protocol link such as "xbsx2:?cmd=..."). Returns false if it
 // could not be started.
 bool launch_uri(const wchar_t *p_uri);
+
+// Another app installed on the console, for Socket's app launcher.
+struct AppEntry {
+	std::wstring id; // AppUserModelId
+	std::wstring name;
+	std::vector<uint8_t> logo; // PNG, may be empty
+};
+// Apps installed for the user (packageQuery capability), without system parts and Socket itself.
+// Blocking (reads every app's logo): call it from a worker thread.
+std::vector<AppEntry> list_apps();
+// Starts an app listed by list_apps(). Returns false if it is no longer installed.
+bool launch_app(const wchar_t *p_id);
 
 // Shows the window, which takes down the system splash screen. Called once the engine's own boot
 // splash (the same picture) is on screen, so the start-up shows no black frames in between.
