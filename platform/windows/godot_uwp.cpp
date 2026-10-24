@@ -63,6 +63,8 @@ static void boot_log(const char *p_message) {
 	if (file == INVALID_HANDLE_VALUE) {
 		std::wstring path = uwp::get_local_dir();
 		path += L"uwp_boot.log";
+		// The previous run's log survives one start: after a crash it's the one that matters.
+		MoveFileExW(path.c_str(), (std::wstring(uwp::get_local_dir()) + L"uwp_boot.prev.log").c_str(), MOVEFILE_REPLACE_EXISTING);
 		file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (file == INVALID_HANDLE_VALUE) {
 			return;
@@ -76,6 +78,98 @@ static void boot_log(const char *p_message) {
 }
 
 static ULONGLONG boot_started_ms = GetTickCount64();
+
+// Crash tracer: the console's full dumps are gigabytes (hours to download). For an exception nobody
+// handled - PCSX2's fastmem handler registers first and takes its own faults - this writes the code,
+// the faulting module+offset and an unwound call stack to <LocalState>\crash_trace.log.
+static HANDLE crash_file = INVALID_HANDLE_VALUE;
+
+static void crash_write(const char *p_text) {
+	if (crash_file == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	DWORD written = 0;
+	WriteFile(crash_file, p_text, (DWORD)strlen(p_text), &written, nullptr);
+}
+
+static void crash_describe(DWORD64 p_address, char *r_out, size_t p_size) {
+	void *base = nullptr;
+	RtlPcToFileHeader((PVOID)p_address, &base);
+	wchar_t module[MAX_PATH] = L"?";
+	if (base) {
+		GetModuleFileNameW((HMODULE)base, module, MAX_PATH);
+	}
+	const wchar_t *name = wcsrchr(module, L'\\');
+	snprintf(r_out, p_size, "%ls+0x%llx", name ? name + 1 : module, (unsigned long long)(p_address - (DWORD64)base));
+}
+
+static LONG CALLBACK crash_tracer(EXCEPTION_POINTERS *p_info) {
+	const DWORD code = p_info->ExceptionRecord->ExceptionCode;
+	switch (code) {
+		case EXCEPTION_ACCESS_VIOLATION:
+		case EXCEPTION_ILLEGAL_INSTRUCTION:
+		case EXCEPTION_PRIV_INSTRUCTION:
+		case EXCEPTION_STACK_OVERFLOW:
+		case EXCEPTION_INT_DIVIDE_BY_ZERO:
+		case EXCEPTION_IN_PAGE_ERROR:
+		case 0xC0000409: // stack buffer overrun / fail-fast
+			break;
+		default:
+			return EXCEPTION_CONTINUE_SEARCH;
+	}
+	static volatile LONG reported = 0;
+	if (InterlockedIncrement(&reported) > 8) {
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+	char line[512];
+	char where[300];
+	crash_describe((DWORD64)p_info->ExceptionRecord->ExceptionAddress, where, sizeof(where));
+	snprintf(line, sizeof(line), "\r\n[%7.2f] exception 0x%08lx at %s, thread %lu", (GetTickCount64() - boot_started_ms) / 1000.0, code, where, GetCurrentThreadId());
+	crash_write(line);
+	if (code == EXCEPTION_ACCESS_VIOLATION && p_info->ExceptionRecord->NumberParameters >= 2) {
+		snprintf(line, sizeof(line), ", %s 0x%llx", p_info->ExceptionRecord->ExceptionInformation[0] == 8 ? "execute" : (p_info->ExceptionRecord->ExceptionInformation[0] ? "write" : "read"), (unsigned long long)p_info->ExceptionRecord->ExceptionInformation[1]);
+		crash_write(line);
+	}
+	crash_write("\r\n");
+	CONTEXT context = *p_info->ContextRecord;
+	for (int frame = 0; frame < 24 && context.Rip; frame++) {
+		crash_describe(context.Rip, where, sizeof(where));
+		snprintf(line, sizeof(line), "    #%d %s\r\n", frame, where);
+		crash_write(line);
+		DWORD64 image_base = 0;
+		PRUNTIME_FUNCTION function = RtlLookupFunctionEntry(context.Rip, &image_base, nullptr);
+		if (function) {
+			void *handler_data = nullptr;
+			DWORD64 establisher = 0;
+			RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, context.Rip, function, &context, &handler_data, &establisher, nullptr);
+		} else {
+			// Leaf or JIT code without unwind data: take the return address off the stack.
+			ULONG_PTR low = 0, high = 0;
+			GetCurrentThreadStackLimits(&low, &high);
+			if (context.Rsp < low || context.Rsp + 8 > high) {
+				break;
+			}
+			context.Rip = *(DWORD64 *)context.Rsp;
+			context.Rsp += 8;
+		}
+	}
+	FlushFileBuffers(crash_file);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void install_crash_tracer() {
+	std::wstring path = std::wstring(uwp::get_local_dir()) + L"crash_trace.log";
+	crash_file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	LARGE_INTEGER size = {};
+	if (crash_file != INVALID_HANDLE_VALUE && GetFileSizeEx(crash_file, &size) && size.QuadPart > 256 * 1024) {
+		// Bounded: start over past 256 KB.
+		CloseHandle(crash_file);
+		crash_file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	}
+	crash_write("\r\n=== Socket started\r\n");
+	// Last in the chain (first argument 0): handlers the cores install themselves run before it.
+	AddVectoredExceptionHandler(0, crash_tracer);
+}
 
 class UwpBootLogger : public Logger {
 public:
@@ -100,6 +194,7 @@ public:
 // Runs the engine on the UI thread once the CoreWindow exists.
 static int godot_uwp_main() {
 	boot_log("godot_uwp_main: entered");
+	install_crash_tracer();
 	godot_init_profiler();
 
 	OS_Windows os(GetModuleHandleW(nullptr));
