@@ -127,6 +127,12 @@ class RenderingDeviceDriverD3D12 : public RenderingDeviceDriver {
 	SamplerCapabilities sampler_capabilities;
 	RenderingShaderContainerFormatD3D12 shader_container_format;
 	String pipeline_cache_id;
+	// Pipeline cache: compiled pipelines kept across runs (ID3D12PipelineLibrary). Without it every
+	// start compiled each pipeline anew - seconds per new kind of mesh on Xbox.
+	Microsoft::WRL::ComPtr<ID3D12PipelineLibrary1> pipeline_library;
+	Vector<uint8_t> pipeline_library_data; // Must outlive the library created from it.
+	Mutex pipeline_library_mutex;
+	Microsoft::WRL::ComPtr<ID3D12PipelineState> _pipeline_create_cached(uint64_t p_key, ID3D12Device2 *p_device, const D3D12_PIPELINE_STATE_STREAM_DESC &p_desc, HRESULT &r_result);
 	D3D12_HEAP_TYPE dynamic_persistent_upload_heap = D3D12_HEAP_TYPE_UPLOAD;
 
 	struct DescriptorHeap {
