@@ -151,8 +151,16 @@ Error RenderingContextDriverD3D12::_initialize_debug_layers() {
 		res = d3d_D3D12GetDebugInterface(IID_PPV_ARGS(&debug_controller));
 	}
 
+#ifdef UWP_ENABLED
+	// The console may not have the SDK layers: go on without them rather than without a renderer.
+	if (!SUCCEEDED(res) || !debug_controller) {
+		WARN_PRINT(vformat("D3D12: debug layer not available (0x%08ux), validation off.", (uint64_t)res));
+		return OK;
+	}
+#endif
 	ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_QUERY_FAILED);
 	debug_controller->EnableDebugLayer();
+	print_line("D3D12: debug layer on");
 	return OK;
 }
 
@@ -164,6 +172,10 @@ Error RenderingContextDriverD3D12::_create_dxgi_factory() {
 	ERR_FAIL_NULL_V(dxgi_CreateDXGIFactory2, ERR_CANT_CREATE);
 
 	HRESULT res = dxgi_CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&dxgi_factory));
+	if (!SUCCEEDED(res) && dxgi_factory_flags) {
+		// No debug DXGI on this system: the plain factory.
+		res = dxgi_CreateDXGIFactory2(0, IID_PPV_ARGS(&dxgi_factory));
+	}
 	ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_CANT_CREATE);
 
 	return OK;

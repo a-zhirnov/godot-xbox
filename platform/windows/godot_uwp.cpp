@@ -359,6 +359,12 @@ static int godot_uwp_main() {
 		// next to the executable as <exe name>.pck instead.
 		"--verbose",
 	};
+	// <LocalState>\gpu_validation.txt (put there through Device Portal): D3D12 debug layer for this
+	// run - PCSX2 then logs what the runtime objects to in its command lists.
+	if (GetFileAttributesW((std::wstring(uwp::get_local_dir()) + L"gpu_validation.txt").c_str()) != INVALID_FILE_ATTRIBUTES) {
+		args_storage.push_back("--gpu-validation");
+		boot_log("GPU validation requested");
+	}
 	std::vector<char *> argv;
 	for (std::string &arg : args_storage) {
 		argv.push_back(arg.data());
