@@ -429,6 +429,12 @@ private:
 
 	struct CommandQueueInfo {
 		Microsoft::WRL::ComPtr<ID3D12CommandQueue> d3d_queue;
+#ifdef UWP_ENABLED
+		// One submission at a time: uploads from loader threads and the frame from the main thread
+		// on the same queue now and then left the frame fence unsignalled forever on Xbox (never with
+		// the debug layer, which serializes queue calls itself).
+		BinaryMutex submit_mutex;
+#endif
 	};
 
 public:
