@@ -192,7 +192,25 @@ bool LibretroD3D11::read_frame(unsigned p_width, unsigned p_height, PackedByteAr
 
 #include <fileapifromapp.h>
 
+#include <string>
+
 namespace {
+
+// The brokered calls want Windows paths: "E:/Roms/x.iso" is refused (4252), "E:\\Roms\\x.iso" works.
+struct WindowsPath {
+	std::wstring path;
+	explicit WindowsPath(LPCWSTR p_name) {
+		if (p_name) {
+			path = p_name;
+			for (wchar_t &c : path) {
+				if (c == L'/') {
+					c = L'\\';
+				}
+			}
+		}
+	}
+	LPCWSTR get() const { return path.empty() ? nullptr : path.c_str(); }
+};
 
 // Plain access first (the app's own folders, the package), the broker only when that is refused:
 // brokered calls reject some flags (.NET's SECURITY_SQOS_PRESENT) even on paths the app owns.
@@ -213,22 +231,50 @@ HANDLE WINAPI redirected_CreateFileW(LPCWSTR p_name, DWORD p_access, DWORD p_sha
 		return handle;
 	}
 	params.dwSecurityQosFlags = 0;
-	handle = CreateFile2FromAppW(p_name, p_access, p_share, p_disposition, &params);
+	handle = CreateFile2FromAppW(WindowsPath(p_name).get(), p_access, p_share, p_disposition, &params);
 	if (handle == INVALID_HANDLE_VALUE) {
 		const DWORD error = GetLastError();
-		print_line(vformat("uwp-redirect: CreateFileW(%s) failed: plain %d, brokered %d", String(p_name), (int)plain_error, (int)error));
+		print_line(vformat("uwp-redirect: CreateFileW(%s, access %x, share %x, disposition %d, flags %x) failed: plain %d, brokered %d", String(p_name), (int)p_access, (int)p_share, (int)p_disposition, (int)p_flags, (int)plain_error, (int)error));
 		SetLastError(error);
 	}
 	return handle;
 }
 
 HANDLE WINAPI redirected_FindFirstFileW(LPCWSTR p_name, LPWIN32_FIND_DATAW r_data) {
-	return FindFirstFileExFromAppW(p_name, FindExInfoStandard, r_data, FindExSearchNameMatch, nullptr, 0);
+	return FindFirstFileExFromAppW(WindowsPath(p_name).get(), FindExInfoStandard, r_data, FindExSearchNameMatch, nullptr, 0);
+}
+
+HANDLE WINAPI redirected_FindFirstFileExW(LPCWSTR p_name, FINDEX_INFO_LEVELS p_level, LPVOID r_data, FINDEX_SEARCH_OPS p_op, LPVOID p_filter, DWORD p_flags) {
+	return FindFirstFileExFromAppW(WindowsPath(p_name).get(), p_level, r_data, p_op, p_filter, p_flags);
+}
+
+BOOL WINAPI redirected_GetFileAttributesExW(LPCWSTR p_name, GET_FILEEX_INFO_LEVELS p_level, LPVOID r_info) {
+	return GetFileAttributesExFromAppW(WindowsPath(p_name).get(), p_level, r_info);
+}
+
+BOOL WINAPI redirected_SetFileAttributesW(LPCWSTR p_name, DWORD p_attributes) {
+	return SetFileAttributesFromAppW(WindowsPath(p_name).get(), p_attributes);
+}
+
+BOOL WINAPI redirected_CreateDirectoryW(LPCWSTR p_name, LPSECURITY_ATTRIBUTES p_security) {
+	return CreateDirectoryFromAppW(WindowsPath(p_name).get(), p_security);
+}
+
+BOOL WINAPI redirected_RemoveDirectoryW(LPCWSTR p_name) {
+	return RemoveDirectoryFromAppW(WindowsPath(p_name).get());
+}
+
+BOOL WINAPI redirected_DeleteFileW(LPCWSTR p_name) {
+	return DeleteFileFromAppW(WindowsPath(p_name).get());
+}
+
+BOOL WINAPI redirected_CopyFileW(LPCWSTR p_from, LPCWSTR p_to, BOOL p_fail_if_exists) {
+	return CopyFileFromAppW(WindowsPath(p_from).get(), WindowsPath(p_to).get(), p_fail_if_exists);
 }
 
 DWORD WINAPI redirected_GetFileAttributesW(LPCWSTR p_name) {
 	WIN32_FILE_ATTRIBUTE_DATA info = {};
-	if (!GetFileAttributesExFromAppW(p_name, GetFileExInfoStandard, &info)) {
+	if (!GetFileAttributesExFromAppW(WindowsPath(p_name).get(), GetFileExInfoStandard, &info)) {
 		return INVALID_FILE_ATTRIBUTES;
 	}
 	return info.dwFileAttributes;
@@ -236,9 +282,9 @@ DWORD WINAPI redirected_GetFileAttributesW(LPCWSTR p_name) {
 
 BOOL WINAPI redirected_MoveFileExW(LPCWSTR p_from, LPCWSTR p_to, DWORD p_flags) {
 	if ((p_flags & MOVEFILE_REPLACE_EXISTING) && p_to) {
-		DeleteFileFromAppW(p_to);
+		DeleteFileFromAppW(WindowsPath(p_to).get());
 	}
-	return MoveFileFromAppW(p_from, p_to);
+	return MoveFileFromAppW(WindowsPath(p_from).get(), WindowsPath(p_to).get());
 }
 
 // UWP hands out executable memory only through VirtualProtectFromApp (with codeGeneration):
@@ -341,15 +387,15 @@ struct Redirect {
 
 const Redirect redirects[] = {
 	{ "CreateFileW", (void *)&redirected_CreateFileW },
-	{ "FindFirstFileExW", (void *)&FindFirstFileExFromAppW },
+	{ "FindFirstFileExW", (void *)&redirected_FindFirstFileExW },
 	{ "FindFirstFileW", (void *)&redirected_FindFirstFileW },
-	{ "GetFileAttributesExW", (void *)&GetFileAttributesExFromAppW },
+	{ "GetFileAttributesExW", (void *)&redirected_GetFileAttributesExW },
 	{ "GetFileAttributesW", (void *)&redirected_GetFileAttributesW },
-	{ "SetFileAttributesW", (void *)&SetFileAttributesFromAppW },
-	{ "CreateDirectoryW", (void *)&CreateDirectoryFromAppW },
-	{ "RemoveDirectoryW", (void *)&RemoveDirectoryFromAppW },
-	{ "DeleteFileW", (void *)&DeleteFileFromAppW },
-	{ "CopyFileW", (void *)&CopyFileFromAppW },
+	{ "SetFileAttributesW", (void *)&redirected_SetFileAttributesW },
+	{ "CreateDirectoryW", (void *)&redirected_CreateDirectoryW },
+	{ "RemoveDirectoryW", (void *)&redirected_RemoveDirectoryW },
+	{ "DeleteFileW", (void *)&redirected_DeleteFileW },
+	{ "CopyFileW", (void *)&redirected_CopyFileW },
 	{ "MoveFileExW", (void *)&redirected_MoveFileExW },
 	{ "VirtualAlloc", (void *)&redirected_VirtualAlloc },
 	{ "VirtualProtect", (void *)&redirected_VirtualProtect },
