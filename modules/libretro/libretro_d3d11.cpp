@@ -387,8 +387,34 @@ LPVOID WINAPI redirected_MapViewOfFileEx(HANDLE p_mapping, DWORD p_access, DWORD
 	if (!p_base) {
 		return MapViewOfFileFromApp(p_mapping, p_access, offset, p_size);
 	}
-	// The only FromApp call that maps at a chosen address.
-	return MapViewOfFile3FromApp(p_mapping, GetCurrentProcess(), p_base, offset, p_size, 0, page_protection_for(p_access), nullptr, 0);
+	// The only FromApp call that maps at a chosen address. PCSX2 needs its memory map there: it
+	// searches the free space near its own image (the JIT reaches it with 32-bit offsets) and takes
+	// the first address where the view lands exactly; anywhere else it aborts on the first game.
+	const ULONG protection = page_protection_for(p_access);
+	LPVOID view = MapViewOfFile3FromApp(p_mapping, GetCurrentProcess(), p_base, offset, p_size, 0, protection, nullptr, 0);
+	if (view) {
+		return view;
+	}
+	const DWORD error = GetLastError();
+	// Second way: reserve the address as a placeholder, then put the view in its place.
+	LPVOID placeholder = VirtualAlloc2FromApp(GetCurrentProcess(), p_base, p_size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS, nullptr, 0);
+	if (placeholder == p_base) {
+		view = MapViewOfFile3FromApp(p_mapping, GetCurrentProcess(), p_base, offset, p_size, MEM_REPLACE_PLACEHOLDER, protection, nullptr, 0);
+		if (!view) {
+			const DWORD placeholder_error = GetLastError();
+			VirtualFree(placeholder, 0, MEM_RELEASE);
+			SetLastError(placeholder_error);
+		}
+	} else if (placeholder) {
+		VirtualFree(placeholder, 0, MEM_RELEASE);
+	}
+	if (p_size >= 16 * 1024 * 1024) {
+		print_line(vformat("uwp-redirect: MapViewOfFileEx(%d MB at %x): direct %d, placeholder %s (%d)", (int64_t)(p_size >> 20), (uint64_t)(uintptr_t)p_base, (int)error, view ? "ok" : (placeholder == p_base ? "view failed" : "no reserve"), view ? 0 : (int)GetLastError()));
+	}
+	if (!view) {
+		SetLastError(error);
+	}
+	return view;
 }
 
 struct Redirect {
