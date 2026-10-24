@@ -4223,6 +4223,11 @@ void RenderingDeviceDriverD3D12::command_bind_push_constants(CommandBufferID p_c
 // ----- CACHE -----
 
 bool RenderingDeviceDriverD3D12::pipeline_cache_create(const Vector<uint8_t> &p_data) {
+#ifdef UWP_ENABLED
+	// The Xbox driver reports pipeline library support, but the device was removed right after
+	// start-up with it (24.10.26, build 48): no cache there.
+	return false;
+#endif
 	D3D12_FEATURE_DATA_SHADER_CACHE shader_cache = {};
 	if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_SHADER_CACHE, &shader_cache, sizeof(shader_cache))) || !(shader_cache.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_LIBRARY)) {
 		print_verbose("D3D12: no pipeline library support, pipelines are compiled on every start.");
