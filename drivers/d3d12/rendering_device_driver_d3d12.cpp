@@ -6505,7 +6505,14 @@ Error RenderingDeviceDriverD3D12::_initialize_allocator() {
 	HRESULT res = D3D12MA::CreateAllocator(&allocator_desc, &allocator);
 	ERR_FAIL_COND_V_MSG(!SUCCEEDED(res), ERR_CANT_CREATE, "D3D12MA::CreateAllocator failed with error " + vformat("0x%08ux", (uint64_t)res) + ".");
 
-	if (allocator->IsGPUUploadHeapSupported()) {
+#ifdef UWP_ENABLED
+	// Xbox reports GPU UPLOAD heaps, but with the frame's dynamic buffers in one Socket now and then
+	// froze: the main thread stuck for good in a memcpy into them during a shadow pass (24.10.26).
+	const bool gpu_upload = false;
+#else
+	const bool gpu_upload = allocator->IsGPUUploadHeapSupported();
+#endif
+	if (gpu_upload) {
 		dynamic_persistent_upload_heap = D3D12_HEAP_TYPE_GPU_UPLOAD;
 		print_verbose("D3D12: Device supports GPU UPLOAD heap.");
 	} else {
