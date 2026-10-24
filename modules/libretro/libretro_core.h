@@ -33,6 +33,8 @@
 #include "core/io/image.h"
 #include "core/object/ref_counted.h"
 #include "core/os/mutex.h"
+#include "core/os/thread.h"
+#include "core/templates/safe_refcount.h"
 #include "core/templates/hash_map.h"
 #include "scene/resources/image_texture.h"
 
@@ -113,6 +115,20 @@ class LibretroCore : public RefCounted {
 	int frame_height = 0;
 
 	PackedVector2Array audio_frames;
+	Mutex audio_mutex;
+
+	// Threaded mode (start_thread): retro_run on a thread of its own, paced at the core's rate, in
+	// parallel with the engine's frame; the main thread only takes the finished picture (present())
+	// and the sound. On the main thread a PS2 frame (13 ms on Xbox) and the engine's own frame did
+	// not fit in one 60 Hz tick, and every missed tick was a lost frame and a gap in the sound.
+	// run_mutex is held around retro_run and every other call into the core.
+	Mutex run_mutex;
+	Thread run_thread;
+	SafeFlag run_thread_quit;
+	SafeFlag run_paused;
+	SafeNumeric<uint64_t> frames_run;
+	static void _run_thread(void *p_self);
+	void _run_once();
 
 	uint32_t joypad[2] = {};
 	int16_t analog[2][4] = {};
@@ -145,6 +161,12 @@ public:
 	Error load_core(const String &p_core_path);
 	Error load_game(const String &p_game_path, const String &p_system_dir, const String &p_save_dir);
 	void run_frame();
+	void start_thread();
+	void stop_thread();
+	void set_paused(bool p_paused);
+	// Threaded mode: the newest finished frame into the texture (main thread, once per engine frame).
+	void present();
+	uint64_t get_frames_run() const { return frames_run.get(); }
 	void reset();
 	void save_sram();
 	// Save states: the core's whole machine state in one file.

@@ -163,6 +163,7 @@ void LibretroCore::_load_sram() {
 }
 
 void LibretroCore::save_sram() {
+	MutexLock lock(run_mutex);
 	if (!game_loaded) {
 		return;
 	}
@@ -177,6 +178,7 @@ void LibretroCore::save_sram() {
 }
 
 Error LibretroCore::save_state(const String &p_path) {
+	MutexLock lock(run_mutex);
 	ERR_FAIL_COND_V(!game_loaded, ERR_UNCONFIGURED);
 	const size_t size = retro_serialize_size();
 	ERR_FAIL_COND_V_MSG(size == 0, ERR_UNAVAILABLE, vformat("%s has no save states.", core_name));
@@ -198,6 +200,7 @@ Error LibretroCore::save_state(const String &p_path) {
 }
 
 Error LibretroCore::load_state(const String &p_path) {
+	MutexLock lock(run_mutex);
 	ERR_FAIL_COND_V(!game_loaded, ERR_UNCONFIGURED);
 	Error err = OK;
 	PackedByteArray data = FileAccess::get_file_as_bytes(p_path, &err);
@@ -208,24 +211,89 @@ Error LibretroCore::load_state(const String &p_path) {
 
 void LibretroCore::run_frame() {
 	if (game_loaded) {
-		active = this;
-		const uint64_t started = OS::get_singleton()->get_ticks_usec();
-		retro_run();
-		const uint64_t ran = OS::get_singleton()->get_ticks_usec();
-		_upload_frame();
-		const uint64_t now = OS::get_singleton()->get_ticks_usec();
-		perf_run_usec += ran - started;
-		perf_upload_usec += now - ran;
-		perf_frames++;
-		if (perf_since == 0) {
-			perf_since = now;
-		} else if (now - perf_since >= 5000000) {
-			const double frames = (double)MAX<uint64_t>(1, perf_frames);
-			print_line(vformat("libretro perf: core %.1f ms, GPU readback %.1f ms, texture upload %.1f ms per frame (%d frames)",
-					(perf_run_usec - perf_readback_usec) / 1000.0 / frames, perf_readback_usec / 1000.0 / frames, perf_upload_usec / 1000.0 / frames, (int64_t)perf_frames));
-			perf_run_usec = perf_readback_usec = perf_upload_usec = perf_frames = 0;
-			perf_since = now;
+		{
+			MutexLock lock(run_mutex);
+			_run_once();
 		}
+		present();
+	}
+}
+
+void LibretroCore::_run_once() {
+	if (!game_loaded) {
+		return;
+	}
+	active = this;
+	const uint64_t started = OS::get_singleton()->get_ticks_usec();
+	retro_run();
+	const uint64_t now = OS::get_singleton()->get_ticks_usec();
+	frames_run.increment();
+	perf_run_usec += now - started;
+	perf_frames++;
+	if (perf_since == 0) {
+		perf_since = now;
+	} else if (now - perf_since >= 5000000) {
+		const double frames = (double)MAX<uint64_t>(1, perf_frames);
+		print_line(vformat("libretro perf: %.1f frames/s, core %.1f ms, GPU readback %.1f ms, texture upload %.1f ms per frame",
+				perf_frames / ((now - perf_since) / 1000000.0), (perf_run_usec - perf_readback_usec) / 1000.0 / frames, perf_readback_usec / 1000.0 / frames, perf_upload_usec / 1000.0 / frames));
+		perf_run_usec = perf_readback_usec = perf_upload_usec = perf_frames = 0;
+		perf_since = now;
+	}
+}
+
+void LibretroCore::present() {
+	const uint64_t started = OS::get_singleton()->get_ticks_usec();
+	_upload_frame();
+	perf_upload_usec += OS::get_singleton()->get_ticks_usec() - started;
+}
+
+void LibretroCore::_run_thread(void *p_self) {
+	LibretroCore *self = (LibretroCore *)p_self;
+	const uint64_t period = (uint64_t)(1000000.0 / MAX(1.0, self->fps));
+	uint64_t next = OS::get_singleton()->get_ticks_usec();
+	while (!self->run_thread_quit.is_set()) {
+		if (self->run_paused.is_set()) {
+			OS::get_singleton()->delay_usec(5000);
+			next = OS::get_singleton()->get_ticks_usec();
+			continue;
+		}
+		{
+			MutexLock lock(self->run_mutex);
+			self->_run_once();
+		}
+		next += period;
+		const uint64_t now = OS::get_singleton()->get_ticks_usec();
+		if (now < next) {
+			OS::get_singleton()->delay_usec(next - now);
+		} else if (now - next > period * 4) {
+			// Far behind (a load, a stall): carry on from here rather than race to catch up.
+			next = now;
+		}
+	}
+}
+
+void LibretroCore::start_thread() {
+	if (!game_loaded || run_thread.is_started()) {
+		return;
+	}
+	run_thread_quit.clear();
+	Thread::Settings settings;
+	settings.priority = Thread::PRIORITY_HIGH;
+	run_thread.start(&LibretroCore::_run_thread, this, settings);
+}
+
+void LibretroCore::stop_thread() {
+	if (run_thread.is_started()) {
+		run_thread_quit.set();
+		run_thread.wait_to_finish();
+	}
+}
+
+void LibretroCore::set_paused(bool p_paused) {
+	if (p_paused) {
+		run_paused.set();
+	} else {
+		run_paused.clear();
 	}
 }
 
@@ -264,6 +332,7 @@ void LibretroCore::_set_variables(const retro_variable *p_vars) {
 }
 
 void LibretroCore::reset() {
+	MutexLock lock(run_mutex);
 	if (game_loaded) {
 		retro_reset();
 	}
@@ -282,6 +351,7 @@ void LibretroCore::set_analog(int p_port, int p_stick, float p_x, float p_y) {
 }
 
 PackedVector2Array LibretroCore::drain_audio() {
+	MutexLock lock(audio_mutex);
 	PackedVector2Array out = audio_frames;
 	audio_frames.clear();
 	return out;
@@ -302,6 +372,8 @@ void LibretroCore::_close() {
 }
 
 void LibretroCore::unload() {
+	stop_thread();
+	MutexLock lock(run_mutex);
 	if (game_loaded) {
 		save_sram();
 		if (hw_context_live && hw_render.context_destroy) {
@@ -529,6 +601,7 @@ void LibretroCore::_video_refresh(const void *p_data, unsigned p_width, unsigned
 
 void LibretroCore::_audio_sample(int16_t p_left, int16_t p_right) {
 	if (active) {
+		MutexLock lock(active->audio_mutex);
 		active->audio_frames.push_back(Vector2(p_left / 32768.0f, p_right / 32768.0f));
 	}
 }
@@ -538,6 +611,7 @@ size_t LibretroCore::_audio_sample_batch(const int16_t *p_data, size_t p_frames)
 	if (!self) {
 		return p_frames;
 	}
+	MutexLock lock(self->audio_mutex);
 	const int start = self->audio_frames.size();
 	self->audio_frames.resize(start + p_frames);
 	Vector2 *out = self->audio_frames.ptrw() + start;
@@ -591,6 +665,11 @@ void LibretroCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load_core", "core_path"), &LibretroCore::load_core);
 	ClassDB::bind_method(D_METHOD("load_game", "game_path", "system_dir", "save_dir"), &LibretroCore::load_game);
 	ClassDB::bind_method(D_METHOD("run_frame"), &LibretroCore::run_frame);
+	ClassDB::bind_method(D_METHOD("start_thread"), &LibretroCore::start_thread);
+	ClassDB::bind_method(D_METHOD("stop_thread"), &LibretroCore::stop_thread);
+	ClassDB::bind_method(D_METHOD("set_paused", "paused"), &LibretroCore::set_paused);
+	ClassDB::bind_method(D_METHOD("present"), &LibretroCore::present);
+	ClassDB::bind_method(D_METHOD("get_frames_run"), &LibretroCore::get_frames_run);
 	ClassDB::bind_method(D_METHOD("reset"), &LibretroCore::reset);
 	ClassDB::bind_method(D_METHOD("save_sram"), &LibretroCore::save_sram);
 	ClassDB::bind_method(D_METHOD("save_state", "path"), &LibretroCore::save_state);
