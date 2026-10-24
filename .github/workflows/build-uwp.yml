@@ -62,7 +62,7 @@ jobs:
           $flags = @(
             "platform=windows", "uwp=yes", "target=template_release", "arch=x86_64",
             "d3d12=yes", "vulkan=no", "opengl3=no", "angle=no", "sdl=no", "xaudio2=yes", "accesskit=no", "winrt=no",
-            "use_static_cpp=no", "lto=none", "debug_symbols=no",
+            "use_static_cpp=no", "lto=none", "debug_symbols=no", "linkflags=/MAP",
             "module_camera_enabled=no", "module_upnp_enabled=no", "module_webrtc_enabled=no",
             "module_openxr_enabled=no", "module_mono_enabled=no", "module_mobile_vr_enabled=no",
             "-j4")
@@ -85,6 +85,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
           Copy-Item bin\godot.windows.template_release.x86_64.exe out\socket.exe
+          # Linker map: turns module+offset from the console's crash_trace.log into function names.
+          Get-ChildItem -Path bin -Filter *.map -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { Copy-Item $_.FullName out\socket.map }
           Get-ChildItem bin | Select-Object Name, Length
 
       - uses: actions/upload-artifact@v4
@@ -93,6 +95,14 @@ jobs:
           name: uwp-engine
           path: out/socket.exe
           retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.quick }}
+        with:
+          name: uwp-engine-map
+          path: out/socket.map
+          if-no-files-found: warn
+          retention-days: 30
 
   package:
     if: ${{ inputs.package && !inputs.quick }}

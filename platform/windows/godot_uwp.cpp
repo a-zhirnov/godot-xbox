@@ -31,6 +31,7 @@
 #include "os_windows.h"
 #include "uwp_bridge.h"
 
+#include "core/config/engine.h"
 #include "core/io/logger.h"
 #include "core/os/thread.h"
 #include "core/profiling/profiling.h"
@@ -39,6 +40,7 @@
 #include <clocale>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 static std::string wide_to_utf8(const wchar_t *p_wide) {
@@ -171,6 +173,111 @@ static void install_crash_tracer() {
 	AddVectoredExceptionHandler(0, crash_tracer);
 }
 
+// Hang watchdog: a frozen Socket (CPU 0%, picture still) leaves no trace - the console's live dumps
+// never finish downloading. When the main loop stops counting frames for HANG_MS, the main thread is
+// suspended for as long as it takes to copy its registers and stack, then resumed; the copy is read
+// afterwards (no lock the frozen thread may hold is touched while it is suspended). Written to
+// crash_trace.log: the instruction it waits at and the return addresses on its stack (the ones that
+// follow a call instruction), as module+offset - tools/uwp/symbolize.py turns them into names
+// with the engine's linker map.
+static const ULONGLONG HANG_MS = 3000;
+static const size_t HANG_STACK_BYTES = 128 * 1024;
+static unsigned char hang_stack[HANG_STACK_BYTES];
+
+static bool follows_call(DWORD64 p_address, DWORD64 p_base) {
+	if (p_address < p_base + 8) {
+		return false;
+	}
+	const unsigned char *code = (const unsigned char *)p_address;
+	if (code[-5] == 0xE8) {
+		return true; // call rel32
+	}
+	// call r/m64: FF /2, 2 to 7 bytes long.
+	for (int length = 2; length <= 7; length++) {
+		if (code[-length] == 0xFF && ((code[-length + 1] >> 3) & 7) == 2) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void hang_report(HANDLE p_thread, ULONGLONG p_stuck_ms) {
+	CONTEXT context = {};
+	context.ContextFlags = CONTEXT_FULL;
+	size_t copied = 0;
+	if (SuspendThread(p_thread) == (DWORD)-1) {
+		return;
+	}
+	if (GetThreadContext(p_thread, &context)) {
+		MEMORY_BASIC_INFORMATION region = {};
+		if (VirtualQuery((LPCVOID)context.Rsp, &region, sizeof(region))) {
+			const DWORD64 end = (DWORD64)region.BaseAddress + region.RegionSize;
+			copied = (size_t)MIN((DWORD64)HANG_STACK_BYTES, end - context.Rsp) & ~(size_t)7;
+			memcpy(hang_stack, (const void *)context.Rsp, copied);
+		}
+	}
+	ResumeThread(p_thread);
+
+	char line[512];
+	char where[300];
+	crash_describe(context.Rip, where, sizeof(where));
+	snprintf(line, sizeof(line), "\r\n[%7.2f] hang: main thread stuck %.1f s at %s\r\n", (GetTickCount64() - boot_started_ms) / 1000.0, p_stuck_ms / 1000.0, where);
+	crash_write(line);
+	int frames = 0;
+	for (size_t offset = 0; offset < copied && frames < 48; offset += 8) {
+		const DWORD64 value = *(const DWORD64 *)(hang_stack + offset);
+		void *base = nullptr;
+		if (value < 0x10000 || !RtlPcToFileHeader((PVOID)value, &base) || !base || !follows_call(value, (DWORD64)base)) {
+			continue;
+		}
+		crash_describe(value, where, sizeof(where));
+		snprintf(line, sizeof(line), "    rsp+0x%llx %s\r\n", (unsigned long long)offset, where);
+		crash_write(line);
+		frames++;
+	}
+	FlushFileBuffers(crash_file);
+	snprintf(line, sizeof(line), "watchdog: main thread stuck %.1f s, stack written to crash_trace.log", p_stuck_ms / 1000.0);
+	boot_log(line);
+}
+
+static void start_hang_watchdog() {
+	HANDLE main_thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+	if (!main_thread && !DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &main_thread, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+		boot_log("watchdog: no handle to the main thread");
+		return;
+	}
+	std::thread([main_thread]() {
+		uint64_t last_frames = Engine::get_singleton()->get_process_frames();
+		ULONGLONG last_change = GetTickCount64();
+		ULONGLONG last_tick = last_change;
+		bool reported = false;
+		while (true) {
+			Sleep(500);
+			const uint64_t frames = Engine::get_singleton()->get_process_frames();
+			const ULONGLONG now = GetTickCount64();
+			// Woken much later than asked: the whole app was suspended (console home, another app in
+			// front), the main thread included. That is no hang.
+			if (now - last_tick > 2000) {
+				last_change = now;
+			}
+			last_tick = now;
+			if (frames != last_frames) {
+				if (reported) {
+					char line[128];
+					snprintf(line, sizeof(line), "watchdog: main thread back after %.1f s", (now - last_change) / 1000.0);
+					boot_log(line);
+					reported = false;
+				}
+				last_frames = frames;
+				last_change = now;
+			} else if (!reported && now - last_change > HANG_MS) {
+				hang_report(main_thread, now - last_change);
+				reported = true;
+			}
+		}
+	}).detach();
+}
+
 class UwpBootLogger : public Logger {
 public:
 	void logv(const char *p_format, va_list p_list, bool p_err) override {
@@ -239,6 +346,7 @@ static int godot_uwp_main() {
 		// Verbose output (every resource load, written to the boot log) is for start-up diagnostics
 		// and the activation safety net; while running it only costs time.
 		OS::get_singleton()->set_stdout_verbose(false);
+		start_hang_watchdog();
 		os.run();
 	} else {
 		boot_log("Main::start failed");
