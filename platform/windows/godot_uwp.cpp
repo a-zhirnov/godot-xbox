@@ -37,6 +37,8 @@
 #include "core/profiling/profiling.h"
 #include "main/main.h"
 
+#include <dxgi1_4.h>
+
 #include <clocale>
 #include <mutex>
 #include <string>
@@ -201,6 +203,32 @@ static bool follows_call(DWORD64 p_address, DWORD64 p_base) {
 	return false;
 }
 
+// The app's video memory against the budget the system gives it (DXGI), to the boot log.
+static void log_video_memory(const char *p_when) {
+	IDXGIFactory4 *factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+		return;
+	}
+	IDXGIAdapter1 *adapter = nullptr;
+	if (SUCCEEDED(factory->EnumAdapters1(0, &adapter))) {
+		IDXGIAdapter3 *adapter3 = nullptr;
+		if (SUCCEEDED(adapter->QueryInterface(IID_PPV_ARGS(&adapter3)))) {
+			DXGI_QUERY_VIDEO_MEMORY_INFO local = {};
+			DXGI_QUERY_VIDEO_MEMORY_INFO non_local = {};
+			adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &local);
+			adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL, &non_local);
+			char line[256];
+			snprintf(line, sizeof(line), "video memory (%s): local %llu of %llu MB budget, non-local %llu of %llu MB", p_when,
+					(unsigned long long)(local.CurrentUsage >> 20), (unsigned long long)(local.Budget >> 20),
+					(unsigned long long)(non_local.CurrentUsage >> 20), (unsigned long long)(non_local.Budget >> 20));
+			boot_log(line);
+			adapter3->Release();
+		}
+		adapter->Release();
+	}
+	factory->Release();
+}
+
 static void hang_report(HANDLE p_thread, ULONGLONG p_stuck_ms) {
 	CONTEXT context = {};
 	context.ContextFlags = CONTEXT_FULL;
@@ -238,6 +266,7 @@ static void hang_report(HANDLE p_thread, ULONGLONG p_stuck_ms) {
 	FlushFileBuffers(crash_file);
 	snprintf(line, sizeof(line), "watchdog: main thread stuck %.1f s, stack written to crash_trace.log", p_stuck_ms / 1000.0);
 	boot_log(line);
+	log_video_memory("at the hang");
 }
 
 static void start_hang_watchdog() {
@@ -250,6 +279,7 @@ static void start_hang_watchdog() {
 		uint64_t last_frames = Engine::get_singleton()->get_process_frames();
 		ULONGLONG last_change = GetTickCount64();
 		ULONGLONG last_tick = last_change;
+		ULONGLONG next_memory_log = last_change + 15000;
 		bool reported = false;
 		while (true) {
 			Sleep(500);
@@ -261,6 +291,10 @@ static void start_hang_watchdog() {
 				last_change = now;
 			}
 			last_tick = now;
+			if (now >= next_memory_log) {
+				log_video_memory("running");
+				next_memory_log = now + 60000;
+			}
 			if (frames != last_frames) {
 				if (reported) {
 					char line[128];

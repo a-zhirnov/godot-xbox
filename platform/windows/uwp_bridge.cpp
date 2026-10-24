@@ -133,12 +133,24 @@ bool _is_gamepad_key(int32_t p_vk) {
 	return (p_vk >= 0x88 && p_vk <= 0x8F) || (p_vk >= 0xC3 && p_vk <= 0xDA);
 }
 
+// Window pixels per view pixel, capped so the window is at most 1920 wide: Socket draws 1920x1080
+// (its screens are made for it), and a 4K TV's 3840x2160 window only cost video memory - the
+// swap chain and the root viewport at 4K took the app past its budget, and the paging froze it
+// (24.10.26). The console stretches the picture to the TV.
 float _scale() {
+	float scale = 1.0f;
 	try {
-		return (float)DisplayInformation::GetForCurrentView().RawPixelsPerViewPixel();
+		scale = (float)DisplayInformation::GetForCurrentView().RawPixelsPerViewPixel();
 	} catch (...) {
 		return 1.0f;
 	}
+	if (g_window) {
+		const float width = g_window.Bounds().Width;
+		if (width > 0.0f && width * scale > 1920.0f) {
+			scale = 1920.0f / width;
+		}
+	}
+	return scale;
 }
 
 void _push(const uwp::Event &p_event) {
