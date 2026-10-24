@@ -454,13 +454,8 @@ void activate_window() {
 	g_window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
 }
 
-// AppListEntry objects from the last list_apps(), by AppUserModelId, for launch_app().
-std::mutex g_apps_mutex;
-std::map<std::wstring, Windows::ApplicationModel::Core::AppListEntry> g_apps;
-
 std::vector<AppEntry> list_apps() {
 	std::vector<AppEntry> out;
-	std::map<std::wstring, Windows::ApplicationModel::Core::AppListEntry> found;
 	try {
 		const hstring self = Windows::ApplicationModel::Package::Current().Id().FamilyName();
 		Windows::Management::Deployment::PackageManager manager;
@@ -489,7 +484,6 @@ std::vector<AppEntry> list_apps() {
 					} catch (...) {
 						app.logo.clear(); // shown without a logo
 					}
-					found.emplace(app.id, entry);
 					out.push_back(std::move(app));
 				}
 			} catch (...) {
@@ -499,25 +493,42 @@ std::vector<AppEntry> list_apps() {
 	} catch (hresult_error const &e) {
 		_diag("list_apps failed: " + winrt::to_string(e.message()));
 	}
-	std::lock_guard<std::mutex> lock(g_apps_mutex);
-	g_apps = std::move(found);
 	return out;
 }
 
 bool launch_app(const wchar_t *p_id) {
-	std::lock_guard<std::mutex> lock(g_apps_mutex);
-	auto it = g_apps.find(p_id);
-	if (it == g_apps.end()) {
+	// Found again on this (UI) thread: the entries listed on a worker thread accepted LaunchAsync()
+	// and then did nothing (24.10.26).
+	const std::wstring id = p_id;
+	const size_t bang = id.find(L'!');
+	if (bang == std::wstring::npos) {
 		return false;
 	}
+	const std::wstring family = id.substr(0, bang);
 	try {
-		_diag("launch_app: " + winrt::to_string(hstring(p_id)));
-		it->second.LaunchAsync();
-		return true;
+		Windows::Management::Deployment::PackageManager manager;
+		for (auto const &package : manager.FindPackagesForUser(L"", family)) {
+			for (auto const &entry : package.GetAppListEntries()) {
+				if (std::wstring(entry.AppUserModelId().c_str()) != id) {
+					continue;
+				}
+				_diag("launch_app: " + winrt::to_string(hstring(p_id)));
+				auto operation = entry.LaunchAsync();
+				operation.Completed([id](auto const &op, Windows::Foundation::AsyncStatus status) {
+					bool launched = false;
+					if (status == Windows::Foundation::AsyncStatus::Completed) {
+						launched = op.GetResults();
+					}
+					_diag("launch_app result: " + winrt::to_string(hstring(id)) + (launched ? " started" : " NOT started, status " + std::to_string((int)status)));
+				});
+				return true;
+			}
+		}
+		_diag("launch_app: not installed " + winrt::to_string(hstring(p_id)));
 	} catch (hresult_error const &e) {
 		_diag("launch_app failed: " + winrt::to_string(e.message()));
-		return false;
 	}
+	return false;
 }
 
 bool launch_uri(const wchar_t *p_uri) {
