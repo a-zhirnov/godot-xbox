@@ -477,6 +477,20 @@ uint32_t RenderingDeviceDriverD3D12::SubgroupCapabilities::supported_operations_
 }
 
 void RenderingDeviceDriverD3D12::_debug_message_func(D3D12_MESSAGE_CATEGORY p_category, D3D12_MESSAGE_SEVERITY p_severity, D3D12_MESSAGE_ID p_id, LPCSTR p_description, void *p_context) {
+#ifdef UWP_ENABLED
+	// Only what is wrong, and a bounded amount of it: the log lives on the console.
+	if (p_severity == D3D12_MESSAGE_SEVERITY_MESSAGE || p_severity == D3D12_MESSAGE_SEVERITY_INFO) {
+		return;
+	}
+	static SafeNumeric<uint32_t> messages_logged;
+	uint32_t logged = messages_logged.postincrement();
+	if (logged >= 300) {
+		if (logged == 300) {
+			ERR_PRINT("D3D12 validation: 300 messages logged, the rest are left out.");
+		}
+		return;
+	}
+#endif
 	String type_string;
 	switch (p_category) {
 		case D3D12_MESSAGE_CATEGORY_APPLICATION_DEFINED:

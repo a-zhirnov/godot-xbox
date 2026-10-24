@@ -44,6 +44,11 @@
 #ifdef DEV_ENABLED
 #define CUSTOM_INFO_QUEUE_ENABLED 0
 #endif
+#ifdef UWP_ENABLED
+// The console has no debugger attached: validation messages go to the log instead of OutputDebugString.
+#undef CUSTOM_INFO_QUEUE_ENABLED
+#define CUSTOM_INFO_QUEUE_ENABLED 1
+#endif
 
 class RenderingContextDriverD3D12;
 
