@@ -123,6 +123,9 @@ std::vector<AppEntry> list_apps();
 // Starts an app listed by list_apps(). Returns false if it is no longer installed.
 bool launch_app(const wchar_t *p_id);
 
+// Restarts Socket (CoreApplication.RequestRestartAsync), e.g. after a new game pack was pushed.
+void request_restart();
+
 // Shows the window, which takes down the system splash screen. Called once the engine's own boot
 // splash (the same picture) is on screen, so the start-up shows no black frames in between.
 void activate_window();

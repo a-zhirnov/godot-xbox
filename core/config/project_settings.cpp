@@ -30,6 +30,10 @@
 
 #include "project_settings.h"
 
+#ifdef UWP_ENABLED
+#include "platform/windows/uwp_bridge.h"
+#endif
+
 #include "core/input/input_map.h"
 #include "core/io/compression.h"
 #include "core/io/config_file.h"
@@ -728,6 +732,18 @@ Error ProjectSettings::_setup(const String &p_path, const String &p_main_pack, b
 		if (!found) {
 			// Attempt to load PCK from macOS .app bundle resources.
 			found = _load_resource_pack(OS::get_singleton()->get_bundle_resource_dir().path_join(exec_basename + ".pck"), false, 0, true) || _load_resource_pack(OS::get_singleton()->get_bundle_resource_dir().path_join(exec_filename + ".pck"), false, 0, true);
+		}
+#endif
+
+#ifdef UWP_ENABLED
+		if (!found) {
+			// Xbox fast path (xbox-ctl.sh push-game): a game pack pushed into the app's LocalState wins
+			// over the installed one while it is the newer of the two - no repackaging or reinstall.
+			const String dev_pack = String::utf16((const char16_t *)uwp::get_local_dir()).replace_char('\\', '/').path_join("socket.pck");
+			const String installed_pack = exec_dir.path_join(exec_basename + ".pck");
+			if (FileAccess::exists(dev_pack) && FileAccess::get_modified_time(dev_pack) > FileAccess::get_modified_time(installed_pack)) {
+				found = _load_resource_pack(dev_pack, false, 0, true);
+			}
 		}
 #endif
 

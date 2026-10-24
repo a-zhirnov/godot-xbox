@@ -141,6 +141,9 @@ static int godot_uwp_main() {
 
 	if (Main::start() == EXIT_SUCCESS) {
 		boot_log("Main::start ok, running");
+		// Verbose output (every resource load, written to the boot log) is for start-up diagnostics
+		// and the activation safety net; while running it only costs time.
+		OS::get_singleton()->set_stdout_verbose(false);
 		os.run();
 	} else {
 		boot_log("Main::start failed");

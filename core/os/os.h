@@ -284,6 +284,8 @@ public:
 	virtual bool is_userfs_persistent() const { return true; }
 
 	bool is_stdout_verbose() const;
+	// Lets a platform keep verbose output for start-up only (UWP: the boot log, see godot_uwp.cpp).
+	void set_stdout_verbose(bool p_enabled) { _verbose_stdout = p_enabled; }
 	bool is_stdout_debug_enabled() const;
 
 	bool is_stdout_enabled() const;

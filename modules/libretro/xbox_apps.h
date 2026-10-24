@@ -47,4 +47,6 @@ public:
 	// worker thread.
 	TypedArray<Dictionary> list();
 	bool launch(const String &p_id);
+	// Restarts Socket itself (picks up a game pack pushed by xbox-ctl.sh push-game).
+	void restart_self();
 };

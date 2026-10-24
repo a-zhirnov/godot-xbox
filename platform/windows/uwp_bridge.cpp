@@ -531,6 +531,15 @@ bool launch_app(const wchar_t *p_id) {
 	return false;
 }
 
+void request_restart() {
+	try {
+		_diag("request_restart");
+		Windows::ApplicationModel::Core::CoreApplication::RequestRestartAsync(L"");
+	} catch (hresult_error const &e) {
+		_diag("request_restart failed: " + winrt::to_string(e.message()));
+	}
+}
+
 bool launch_uri(const wchar_t *p_uri) {
 	try {
 		Windows::Foundation::Uri uri{ hstring(p_uri) };

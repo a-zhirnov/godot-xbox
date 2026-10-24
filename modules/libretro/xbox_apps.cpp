@@ -69,7 +69,14 @@ bool XboxApps::launch(const String &p_id) {
 #endif
 }
 
+void XboxApps::restart_self() {
+#ifdef UWP_ENABLED
+	uwp::request_restart();
+#endif
+}
+
 void XboxApps::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("restart_self"), &XboxApps::restart_self);
 	ClassDB::bind_method(D_METHOD("list"), &XboxApps::list);
 	ClassDB::bind_method(D_METHOD("launch", "id"), &XboxApps::launch);
 }
