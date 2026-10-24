@@ -2445,7 +2445,14 @@ RDD::CommandQueueFamilyID RenderingDeviceDriverD3D12::command_queue_family_get(B
 	} else if (p_cmd_queue_family_bits.has_flag(COMMAND_QUEUE_FAMILY_COMPUTE_BIT)) {
 		return CommandQueueFamilyID(D3D12_COMMAND_LIST_TYPE_COMPUTE + 1);
 	} else if (p_cmd_queue_family_bits.has_flag(COMMAND_QUEUE_FAMILY_TRANSFER_BIT)) {
+#ifdef UWP_ENABLED
+		// No copy queue on Xbox: its copy engine hung on texture uploads now and then, forever
+		// (engine at 100%, the frame fence never signalled, Socket frozen; 24.10.26). Without a
+		// transfer family the renderer uploads on the main queue.
+		return CommandQueueFamilyID();
+#else
 		return CommandQueueFamilyID(D3D12_COMMAND_LIST_TYPE_COPY + 1);
+#endif
 	} else {
 		return CommandQueueFamilyID();
 	}
