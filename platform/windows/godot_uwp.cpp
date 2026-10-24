@@ -332,6 +332,21 @@ public:
 	}
 };
 
+// The first word of a small file in LocalState ("" when there is none): switches set from Device Portal.
+static std::string read_local_flag(const wchar_t *p_name) {
+	HANDLE file = CreateFileW((std::wstring(uwp::get_local_dir()) + p_name).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE) {
+		return std::string();
+	}
+	char buffer[16] = {};
+	DWORD read = 0;
+	ReadFile(file, buffer, sizeof(buffer) - 1, &read, nullptr);
+	CloseHandle(file);
+	std::string text(buffer, read);
+	const size_t end = text.find_first_of(" \r\n\t");
+	return end == std::string::npos ? text : text.substr(0, end);
+}
+
 // Runs the engine on the UI thread once the CoreWindow exists.
 static int godot_uwp_main() {
 	boot_log("godot_uwp_main: entered");
@@ -361,7 +376,7 @@ static int godot_uwp_main() {
 	};
 	// <LocalState>\gpu_validation.txt (put there through Device Portal): D3D12 debug layer for this
 	// run - PCSX2 then logs what the runtime objects to in its command lists.
-	if (GetFileAttributesW((std::wstring(uwp::get_local_dir()) + L"gpu_validation.txt").c_str()) != INVALID_FILE_ATTRIBUTES) {
+	if (read_local_flag(L"gpu_validation.txt") == "on") {
 		args_storage.push_back("--gpu-validation");
 		boot_log("GPU validation requested");
 	}
