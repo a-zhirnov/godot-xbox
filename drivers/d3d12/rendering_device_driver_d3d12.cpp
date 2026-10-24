@@ -482,6 +482,10 @@ void RenderingDeviceDriverD3D12::_debug_message_func(D3D12_MESSAGE_CATEGORY p_ca
 	if (p_severity == D3D12_MESSAGE_SEVERITY_MESSAGE || p_severity == D3D12_MESSAGE_SEVERITY_INFO) {
 		return;
 	}
+	// The callback sees what the filter below mutes; these are only slower clears, hundreds a second.
+	if (p_id == D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE || p_id == D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE) {
+		return;
+	}
 	static SafeNumeric<uint32_t> messages_logged;
 	uint32_t logged = messages_logged.postincrement();
 	if (logged >= 300) {
