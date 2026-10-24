@@ -32,6 +32,7 @@
 #include "uwp_bridge.h"
 
 #include "core/io/logger.h"
+#include "core/os/thread.h"
 #include "core/profiling/profiling.h"
 #include "main/main.h"
 
@@ -74,6 +75,8 @@ static void boot_log(const char *p_message) {
 	WriteFile(file, line.data(), (DWORD)line.size(), &written, nullptr);
 }
 
+static ULONGLONG boot_started_ms = GetTickCount64();
+
 class UwpBootLogger : public Logger {
 public:
 	void logv(const char *p_format, va_list p_list, bool p_err) override {
@@ -85,6 +88,11 @@ public:
 		}
 		if (len > 0) {
 			boot_log(buffer);
+		}
+		// Safety net: Xbox ends a launch whose window is not shown within a few seconds (0x800705B4).
+		// A cold shader cache can keep the boot splash away longer than that; show the window anyway.
+		if (Thread::is_main_thread() && GetTickCount64() - boot_started_ms > 3500) {
+			uwp::activate_window();
 		}
 	}
 };

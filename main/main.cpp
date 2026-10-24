@@ -30,6 +30,10 @@
 
 #include "main.h"
 
+#ifdef UWP_ENABLED
+#include "platform/windows/uwp_bridge.h"
+#endif
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/core_globals.h"
@@ -3968,6 +3972,11 @@ void Main::setup_boot_logo() {
 #endif
 		if (boot_logo.is_valid()) {
 			RenderingServer::get_singleton()->set_boot_image_with_stretch(boot_logo, boot_bg_color, boot_stretch_mode, boot_logo_filter);
+#ifdef UWP_ENABLED
+			// The boot splash is on screen: let the system splash go now (same picture, no black gap,
+			// and well inside the time Xbox gives an app to show its window).
+			uwp::activate_window();
+#endif
 
 		} else {
 #ifndef NO_DEFAULT_BOOT_LOGO
@@ -3982,6 +3991,11 @@ void Main::setup_boot_logo() {
 			RenderingServer::get_singleton()->set_default_clear_color(boot_bg_color);
 			MAIN_PRINT("Main: Image");
 			RenderingServer::get_singleton()->set_boot_image_with_stretch(splash, boot_bg_color, RSE::SPLASH_STRETCH_MODE_DISABLED);
+#ifdef UWP_ENABLED
+			// The boot splash is on screen: let the system splash go now (same picture, no black gap,
+			// and well inside the time Xbox gives an app to show its window).
+			uwp::activate_window();
+#endif
 #endif
 		}
 
