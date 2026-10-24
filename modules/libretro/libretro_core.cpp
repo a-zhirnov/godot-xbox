@@ -31,6 +31,7 @@
 #include "libretro_core.h"
 
 #include "libretro_d3d11.h"
+#include "libretro_d3d12.h"
 
 #include "core/io/dir_access.h"
 #include "core/object/class_db.h"
@@ -127,7 +128,7 @@ Error LibretroCore::load_game(const String &p_game_path, const String &p_system_
 
 	ERR_FAIL_COND_V_MSG(!retro_load_game(&game), ERR_FILE_UNRECOGNIZED, vformat("%s refused to load %s.", core_name, p_game_path));
 	game_loaded = true;
-	if (d3d11 && hw_render.context_reset) {
+	if ((d3d11 || d3d12) && hw_render.context_reset) {
 		// The context is ready once the game is loaded, as in RetroArch: the core opens its renderer here.
 		hw_context_live = true;
 		hw_render.context_reset();
@@ -315,6 +316,10 @@ void LibretroCore::unload() {
 		delete d3d11;
 		d3d11 = nullptr;
 	}
+	if (d3d12) {
+		delete d3d12;
+		d3d12 = nullptr;
+	}
 	hw_render = {};
 	option_values.clear();
 	game_data.clear();
@@ -403,7 +408,8 @@ bool LibretroCore::_environment(unsigned p_cmd, void *p_data) {
 		}
 		case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
 #ifdef WINDOWS_ENABLED
-			*(retro_hw_context_type *)p_data = RETRO_HW_CONTEXT_D3D11;
+			// D3D12: on Xbox D3D11 runs through d3d11on12, a layer PCSX2's draw calls can't afford.
+			*(retro_hw_context_type *)p_data = RETRO_HW_CONTEXT_D3D12;
 			return true;
 #else
 			return false;
@@ -413,19 +419,31 @@ bool LibretroCore::_environment(unsigned p_cmd, void *p_data) {
 			if (cb->context_type == RETRO_HW_CONTEXT_NONE) {
 				return true;
 			}
-			if (cb->context_type != RETRO_HW_CONTEXT_D3D11) {
-				return false;
-			}
-			if (!self->d3d11) {
-				self->d3d11 = LibretroD3D11::create();
-			}
-			if (!self->d3d11) {
+			if (cb->context_type == RETRO_HW_CONTEXT_D3D12) {
+				if (!self->d3d12) {
+					self->d3d12 = LibretroD3D12::create();
+				}
+				if (!self->d3d12) {
+					return false;
+				}
+			} else if (cb->context_type == RETRO_HW_CONTEXT_D3D11) {
+				if (!self->d3d11) {
+					self->d3d11 = LibretroD3D11::create();
+				}
+				if (!self->d3d11) {
+					return false;
+				}
+			} else {
 				return false;
 			}
 			self->hw_render = *cb;
 			return true;
 		}
 		case RETRO_ENVIRONMENT_GET_HW_RENDER_INTERFACE:
+			if (self->d3d12 && self->hw_render.context_type == RETRO_HW_CONTEXT_D3D12) {
+				*(const void **)p_data = self->d3d12->get_interface();
+				return true;
+			}
 			if (!self->d3d11) {
 				return false;
 			}
@@ -453,7 +471,8 @@ void LibretroCore::_video_refresh(const void *p_data, unsigned p_width, unsigned
 	if (p_data == RETRO_HW_FRAME_BUFFER_VALID) {
 		unsigned width = 0, height = 0;
 		const uint64_t started = OS::get_singleton()->get_ticks_usec();
-		const bool read = self->d3d11 && self->d3d11->read_frame(p_width, p_height, self->frame_rgba, width, height);
+		const bool read = self->d3d12 ? self->d3d12->read_frame(p_width, p_height, self->frame_rgba, width, height)
+										: self->d3d11 && self->d3d11->read_frame(p_width, p_height, self->frame_rgba, width, height);
 		self->perf_readback_usec += OS::get_singleton()->get_ticks_usec() - started;
 		if (read) {
 			self->frame_width = width;

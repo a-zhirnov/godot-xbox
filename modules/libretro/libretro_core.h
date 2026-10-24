@@ -39,6 +39,7 @@
 #include "libretro.h"
 
 class LibretroD3D11;
+class LibretroD3D12;
 
 // Runs one libretro emulator core in-process: the frontend side of the libretro API.
 // One core at a time (libretro callbacks are global). Drive it from a script every frame:
@@ -89,6 +90,7 @@ class LibretroCore : public RefCounted {
 	// Hardware rendering (PCSX2): the core draws through a D3D11 device of ours.
 	retro_hw_render_callback hw_render = {};
 	LibretroD3D11 *d3d11 = nullptr;
+	LibretroD3D12 *d3d12 = nullptr;
 	bool hw_context_live = false;
 
 	// video_refresh can come from the core's own GS thread: the frame is kept here and turned
