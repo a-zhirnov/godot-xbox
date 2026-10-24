@@ -8419,9 +8419,17 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 		transfer_queue_family = main_queue_family;
 	}
 
+#ifdef UWP_ENABLED
+	// Xbox: uploads go on the main queue itself. With a queue of their own (copy, or a second
+	// direct one) the main queue now and then waited forever on their fence: the 3D engine idle,
+	// the frame never done, Socket frozen (24.10.26). On one queue the transfer workers' signals
+	// are submitted before the frame that waits on them, so the wait is always satisfiable.
+	transfer_queue = main_queue;
+#else
 	// Create the transfer queue.
 	transfer_queue = driver->command_queue_create(transfer_queue_family);
 	ERR_FAIL_COND_V(!transfer_queue, FAILED);
+#endif
 
 	if (present_queue_family) {
 		// Create the present queue.
