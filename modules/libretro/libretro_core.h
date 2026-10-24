@@ -95,6 +95,13 @@ class LibretroCore : public RefCounted {
 	// into the texture on the main thread after retro_run().
 	Mutex frame_mutex;
 	bool frame_dirty = false;
+	// Where a frame's time goes, logged every 5 s: the core's own work (retro_run less the readback),
+	// reading a hardware-rendered frame back from the GPU, and handing it to the engine's texture.
+	uint64_t perf_run_usec = 0;
+	uint64_t perf_readback_usec = 0;
+	uint64_t perf_upload_usec = 0;
+	uint64_t perf_frames = 0;
+	uint64_t perf_since = 0;
 
 	retro_pixel_format pixel_format = RETRO_PIXEL_FORMAT_0RGB1555;
 	PackedByteArray frame_rgba;

@@ -55,13 +55,33 @@ struct retro_hw_render_interface_d3d11 {
 };
 } // namespace
 
+// Frames come back through a ring of staging textures: this frame is copied into one, and the one
+// copied STAGING_RING - 1 frames ago is read - the GPU finished it long ago. Mapping the texture just
+// copied made the CPU wait for the GPU to draw the whole frame, every frame (half the PS2's speed).
+static constexpr int STAGING_RING = 3;
+
 struct LibretroD3D11::Data {
 	ID3D11Device *device = nullptr;
 	ID3D11DeviceContext *context = nullptr;
-	ID3D11Texture2D *staging = nullptr;
+	ID3D11Texture2D *staging[STAGING_RING] = {};
+	unsigned staging_width[STAGING_RING] = {};
+	unsigned staging_height[STAGING_RING] = {};
+	bool staging_filled[STAGING_RING] = {};
 	D3D11_TEXTURE2D_DESC staging_desc = {};
+	int next = 0;
 	retro_hw_render_interface_d3d11 iface = {};
 	bool format_reported = false;
+
+	void release_staging() {
+		for (int i = 0; i < STAGING_RING; i++) {
+			if (staging[i]) {
+				staging[i]->Release();
+				staging[i] = nullptr;
+			}
+			staging_filled[i] = false;
+		}
+		next = 0;
+	}
 };
 
 LibretroD3D11 *LibretroD3D11::create() {
@@ -91,9 +111,7 @@ LibretroD3D11 *LibretroD3D11::create() {
 }
 
 LibretroD3D11::~LibretroD3D11() {
-	if (data->staging) {
-		data->staging->Release();
-	}
+	data->release_staging();
 	if (data->context) {
 		data->context->ClearState();
 		data->context->Flush();
@@ -143,11 +161,8 @@ bool LibretroD3D11::read_frame(unsigned p_width, unsigned p_height, PackedByteAr
 	const unsigned height = MIN(p_height, desc.Height);
 
 	D3D11_TEXTURE2D_DESC &sd = data->staging_desc;
-	if (!data->staging || sd.Width != desc.Width || sd.Height != desc.Height || sd.Format != desc.Format) {
-		if (data->staging) {
-			data->staging->Release();
-			data->staging = nullptr;
-		}
+	if (!data->staging[0] || sd.Width != desc.Width || sd.Height != desc.Height || sd.Format != desc.Format) {
+		data->release_staging();
 		sd = desc;
 		sd.MipLevels = 1;
 		sd.ArraySize = 1;
@@ -155,36 +170,59 @@ bool LibretroD3D11::read_frame(unsigned p_width, unsigned p_height, PackedByteAr
 		sd.BindFlags = 0;
 		sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 		sd.MiscFlags = 0;
-		if (FAILED(data->device->CreateTexture2D(&sd, nullptr, &data->staging))) {
-			data->staging = nullptr;
-			frame->Release();
-			return false;
+		for (int i = 0; i < STAGING_RING; i++) {
+			if (FAILED(data->device->CreateTexture2D(&sd, nullptr, &data->staging[i]))) {
+				data->release_staging();
+				frame->Release();
+				return false;
+			}
 		}
 	}
+	const int write = data->next;
+	data->next = (write + 1) % STAGING_RING;
 	const D3D11_BOX box = { 0, 0, 0, width, height, 1 };
-	data->context->CopySubresourceRegion(data->staging, 0, 0, 0, 0, frame, 0, &box);
+	data->context->CopySubresourceRegion(data->staging[write], 0, 0, 0, 0, frame, 0, &box);
 	frame->Release();
+	data->staging_width[write] = width;
+	data->staging_height[write] = height;
+	data->staging_filled[write] = true;
 
-	D3D11_MAPPED_SUBRESOURCE mapped = {};
-	if (FAILED(data->context->Map(data->staging, 0, D3D11_MAP_READ, 0, &mapped))) {
+	// The oldest copy in the ring; until the ring has filled up there is nothing to show yet.
+	const int read = data->next;
+	if (!data->staging_filled[read]) {
 		return false;
 	}
-	r_rgba.resize(width * height * 4);
-	uint8_t *dst = r_rgba.ptrw();
-	for (unsigned y = 0; y < height; y++) {
-		const uint8_t *src = (const uint8_t *)mapped.pData + y * mapped.RowPitch;
-		uint8_t *out = dst + y * width * 4;
-		for (unsigned x = 0; x < width; x++) {
-			// PS2 alpha means blending, not coverage: the picture is shown opaque.
-			out[x * 4 + 0] = src[x * 4 + (bgra ? 2 : 0)];
-			out[x * 4 + 1] = src[x * 4 + 1];
-			out[x * 4 + 2] = src[x * 4 + (bgra ? 0 : 2)];
-			out[x * 4 + 3] = 0xFF;
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	HRESULT hr = data->context->Map(data->staging[read], 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+	if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+		// Two frames behind and still not done: the GPU is the bottleneck; wait for this one.
+		hr = data->context->Map(data->staging[read], 0, D3D11_MAP_READ, 0, &mapped);
+	}
+	if (FAILED(hr)) {
+		return false;
+	}
+	const unsigned out_width = data->staging_width[read];
+	const unsigned out_height = data->staging_height[read];
+	r_rgba.resize(out_width * out_height * 4);
+	uint32_t *dst = (uint32_t *)r_rgba.ptrw();
+	for (unsigned y = 0; y < out_height; y++) {
+		const uint32_t *src = (const uint32_t *)((const uint8_t *)mapped.pData + y * mapped.RowPitch);
+		uint32_t *out = dst + y * out_width;
+		// PS2 alpha means blending, not coverage: the picture is shown opaque.
+		if (bgra) {
+			for (unsigned x = 0; x < out_width; x++) {
+				const uint32_t c = src[x];
+				out[x] = (c & 0x0000FF00u) | ((c >> 16) & 0xFFu) | ((c & 0xFFu) << 16) | 0xFF000000u;
+			}
+		} else {
+			for (unsigned x = 0; x < out_width; x++) {
+				out[x] = src[x] | 0xFF000000u;
+			}
 		}
 	}
-	data->context->Unmap(data->staging, 0);
-	r_width = width;
-	r_height = height;
+	data->context->Unmap(data->staging[read], 0);
+	r_width = out_width;
+	r_height = out_height;
 	return true;
 }
 

@@ -208,8 +208,23 @@ Error LibretroCore::load_state(const String &p_path) {
 void LibretroCore::run_frame() {
 	if (game_loaded) {
 		active = this;
+		const uint64_t started = OS::get_singleton()->get_ticks_usec();
 		retro_run();
+		const uint64_t ran = OS::get_singleton()->get_ticks_usec();
 		_upload_frame();
+		const uint64_t now = OS::get_singleton()->get_ticks_usec();
+		perf_run_usec += ran - started;
+		perf_upload_usec += now - ran;
+		perf_frames++;
+		if (perf_since == 0) {
+			perf_since = now;
+		} else if (now - perf_since >= 5000000) {
+			const double frames = (double)MAX<uint64_t>(1, perf_frames);
+			print_line(vformat("libretro perf: core %.1f ms, GPU readback %.1f ms, texture upload %.1f ms per frame (%d frames)",
+					(perf_run_usec - perf_readback_usec) / 1000.0 / frames, perf_readback_usec / 1000.0 / frames, perf_upload_usec / 1000.0 / frames, (int64_t)perf_frames));
+			perf_run_usec = perf_readback_usec = perf_upload_usec = perf_frames = 0;
+			perf_since = now;
+		}
 	}
 }
 
@@ -437,7 +452,10 @@ void LibretroCore::_video_refresh(const void *p_data, unsigned p_width, unsigned
 	MutexLock lock(self->frame_mutex);
 	if (p_data == RETRO_HW_FRAME_BUFFER_VALID) {
 		unsigned width = 0, height = 0;
-		if (self->d3d11 && self->d3d11->read_frame(p_width, p_height, self->frame_rgba, width, height)) {
+		const uint64_t started = OS::get_singleton()->get_ticks_usec();
+		const bool read = self->d3d11 && self->d3d11->read_frame(p_width, p_height, self->frame_rgba, width, height);
+		self->perf_readback_usec += OS::get_singleton()->get_ticks_usec() - started;
+		if (read) {
 			self->frame_width = width;
 			self->frame_height = height;
 			self->frame_dirty = true;
