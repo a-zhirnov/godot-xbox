@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       package:
-        description: "Also build the signed MSIX package"
+        description: "Also build the signed MSIX package (Socket's own packages come from socket-xbox-pack)"
         type: boolean
-        default: true
+        default: false
       quick:
         description: "Quick check: compile only the platform/driver objects (all errors at once), no link"
         type: boolean
