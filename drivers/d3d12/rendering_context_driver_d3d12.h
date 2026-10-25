@@ -52,6 +52,10 @@ class RenderingContextDriverD3D12 : public RenderingContextDriver {
 
 	Error _init_device_factory();
 	Error _initialize_debug_layers();
+#ifdef UWP_ENABLED
+	void _initialize_dred();
+	bool dred_enabled = false;
+#endif
 	Error _create_dxgi_factory();
 	Error _initialize_devices();
 
@@ -123,6 +127,10 @@ public:
 	IDXGIFactory2 *dxgi_factory_get();
 	bool get_tearing_supported() const;
 	bool use_validation_layers() const;
+#ifdef UWP_ENABLED
+	// DRED (the GPU's record of how far each command list got) is on: GODOT_D3D12_DRED is set.
+	bool is_dred_enabled() const { return dred_enabled; }
+#endif
 
 	RenderingContextDriverD3D12();
 	virtual ~RenderingContextDriverD3D12() override;

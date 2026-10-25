@@ -2423,6 +2423,9 @@ Error RenderingDeviceDriverD3D12::fence_wait(FenceID p_fence) {
 	if (res == WAIT_TIMEOUT) {
 		ERR_PRINT(vformat("D3D12: fence wait over 3 s: waiting for %d, GPU at %d, device %s.", (int64_t)fence->fence_value,
 				(int64_t)fence->d3d_fence->GetCompletedValue(), vformat("0x%08ux", (uint64_t)device->GetDeviceRemovedReason())));
+		if (context_driver->is_dred_enabled()) {
+			_log_dred_and_remove_device();
+		}
 		res = WaitForSingleObjectEx(fence->event_handle, INFINITE, FALSE);
 	}
 #else
@@ -2440,6 +2443,65 @@ void RenderingDeviceDriverD3D12::fence_free(FenceID p_fence) {
 	CloseHandle(fence->event_handle);
 	memdelete(fence);
 }
+
+#ifdef UWP_ENABLED
+// The frame never finished: take the device down (DRED is only readable from a removed device) and log
+// where each unfinished command list stopped on the GPU, with the render pass labels around it, and
+// any page fault. Socket ends after this; it only happens with LocalState\gpu_dred.txt saying on.
+void RenderingDeviceDriverD3D12::_log_dred_and_remove_device() {
+	static const char *op_names[] = { "SetMarker", "BeginEvent", "EndEvent", "DrawInstanced", "DrawIndexedInstanced",
+		"ExecuteIndirect", "Dispatch", "CopyBufferRegion", "CopyTextureRegion", "CopyResource", "CopyTiles",
+		"ResolveSubresource", "ClearRenderTargetView", "ClearUnorderedAccessView", "ClearDepthStencilView",
+		"ResourceBarrier", "ExecuteBundle", "Present", "ResolveQueryData", "BeginSubmission", "EndSubmission" };
+	ComPtr<ID3D12Device5> device_5;
+	if (SUCCEEDED(device.As(&device_5))) {
+		device_5->RemoveDevice();
+	}
+	ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
+	if (!SUCCEEDED(device.As(&dred))) {
+		ERR_PRINT("DRED: no record on this device.");
+		return;
+	}
+	D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs = {};
+	if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+		for (const D3D12_AUTO_BREADCRUMB_NODE1 *node = breadcrumbs.pHeadAutoBreadcrumbNode; node; node = node->pNext) {
+			const uint32_t done = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
+			if (done >= node->BreadcrumbCount) {
+				continue;
+			}
+			ERR_PRINT(vformat("DRED: command list %s on queue %s stopped after %d of %d operations.",
+					node->pCommandListDebugNameA ? node->pCommandListDebugNameA : "(unnamed)",
+					node->pCommandQueueDebugNameA ? node->pCommandQueueDebugNameA : "(unnamed)", done, node->BreadcrumbCount));
+			// The label the stop is inside: the last event begun before it and not ended.
+			String label;
+			for (uint32_t i = 0; i < node->BreadcrumbContextsCount; i++) {
+				const D3D12_DRED_BREADCRUMB_CONTEXT &context = node->pBreadcrumbContexts[i];
+				if (context.BreadcrumbIndex <= done && context.pContextString) {
+					label = String(context.pContextString);
+				}
+			}
+			ERR_PRINT("DRED:   inside: " + (label.is_empty() ? String("(no label)") : label));
+			const uint32_t from = done > 4 ? done - 4 : 0;
+			const uint32_t to = MIN(node->BreadcrumbCount, done + 6);
+			for (uint32_t i = from; i < to; i++) {
+				const uint32_t op = node->pCommandHistory[i];
+				const String op_name = op < sizeof(op_names) / sizeof(op_names[0]) ? String(op_names[op]) : itos(op);
+				ERR_PRINT(vformat("DRED:   %s %d %s", i < done ? "done   " : (i == done ? "STOPPED" : "pending"), i, op_name));
+			}
+		}
+	}
+	D3D12_DRED_PAGE_FAULT_OUTPUT1 page_fault = {};
+	if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&page_fault)) && page_fault.PageFaultVA) {
+		ERR_PRINT(vformat("DRED: page fault at GPU address 0x%x.", (uint64_t)page_fault.PageFaultVA));
+		for (const D3D12_DRED_ALLOCATION_NODE1 *node = page_fault.pHeadExistingAllocationNode; node; node = node->pNext) {
+			ERR_PRINT(vformat("DRED:   there: %s (type %d)", node->ObjectNameA ? node->ObjectNameA : "(unnamed)", (int)node->AllocationType));
+		}
+		for (const D3D12_DRED_ALLOCATION_NODE1 *node = page_fault.pHeadRecentFreedAllocationNode; node; node = node->pNext) {
+			ERR_PRINT(vformat("DRED:   freed just before: %s (type %d)", node->ObjectNameA ? node->ObjectNameA : "(unnamed)", (int)node->AllocationType));
+		}
+	}
+}
+#endif
 
 /********************/
 /**** SEMAPHORES ****/
@@ -5872,6 +5934,13 @@ void RenderingDeviceDriverD3D12::command_begin_label(CommandBufferID p_cmd_buffe
 #ifdef PIX_ENABLED
 	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
 	PIXBeginEvent(cmd_buf_info->cmd_list.Get(), p_color.to_argb32(), p_label_name);
+#elif defined(UWP_ENABLED)
+	// For DRED, which keeps the label a GPU stop happened inside (metadata 0: a UTF-16 string).
+	if (context_driver->is_dred_enabled()) {
+		const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
+		const Char16String label = String(p_label_name).utf16();
+		cmd_buf_info->cmd_list->BeginEvent(0, label.get_data(), (label.length() + 1) * sizeof(char16_t));
+	}
 #endif
 }
 
@@ -5879,6 +5948,11 @@ void RenderingDeviceDriverD3D12::command_end_label(CommandBufferID p_cmd_buffer)
 #ifdef PIX_ENABLED
 	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
 	PIXEndEvent(cmd_buf_info->cmd_list.Get());
+#elif defined(UWP_ENABLED)
+	if (context_driver->is_dred_enabled()) {
+		const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
+		cmd_buf_info->cmd_list->EndEvent();
+	}
 #endif
 }
 
