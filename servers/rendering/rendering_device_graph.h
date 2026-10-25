@@ -283,7 +283,7 @@ private:
 	};
 
 	struct ComputeInstructionList : InstructionList {
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 		uint32_t breadcrumb;
 #endif
 	};
@@ -300,7 +300,7 @@ private:
 		LocalVector<AttachmentOperation> attachment_operations;
 		LocalVector<RDD::RenderPassClearValue> attachment_clear_values;
 
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 		uint32_t breadcrumb;
 #endif
 		bool split_cmd_buffer = false;
@@ -426,7 +426,7 @@ private:
 		uint32_t clear_values_count = 0;
 		uint32_t trackers_count = 0;
 
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 		uint32_t breadcrumb = 0;
 #endif
 		bool split_cmd_buffer = false;

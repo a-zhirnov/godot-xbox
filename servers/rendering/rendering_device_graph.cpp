@@ -1052,7 +1052,7 @@ void RenderingDeviceGraph::_add_draw_list_begin(FramebufferCache *p_framebuffer_
 
 	draw_instruction_list.split_cmd_buffer = p_split_cmd_buffer;
 
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 	draw_instruction_list.breadcrumb = p_breadcrumb;
 #endif
 }
@@ -2018,7 +2018,7 @@ void RenderingDeviceGraph::add_raytracing_list_end() {
 
 void RenderingDeviceGraph::add_compute_list_begin(RDD::BreadcrumbMarker p_phase, uint32_t p_breadcrumb_data) {
 	compute_instruction_list.clear();
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 	compute_instruction_list.breadcrumb = p_breadcrumb_data | (p_phase & ((1 << 16) - 1));
 #endif
 	compute_instruction_list.index++;
@@ -2338,7 +2338,7 @@ void RenderingDeviceGraph::add_draw_list_end() {
 	command->instruction_data_size = instruction_data_size;
 	command->command_buffer_type = RDD::COMMAND_BUFFER_TYPE_PRIMARY;
 	command->region = draw_instruction_list.region;
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 	command->breadcrumb = draw_instruction_list.breadcrumb;
 #endif
 	command->split_cmd_buffer = draw_instruction_list.split_cmd_buffer;
