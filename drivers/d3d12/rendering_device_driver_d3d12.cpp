@@ -3323,6 +3323,9 @@ RDD::ShaderID RenderingDeviceDriverD3D12::shader_create_from_container(const Ref
 	}
 
 	shader_info_in.spirv_specialization_constants_ids_mask = shader_refl_d3d12.spirv_specialization_constants_ids_mask;
+#ifdef UWP_ENABLED
+	shader_info_in.name = p_shader_container->shader_name;
+#endif
 	shader_info_in.nir_runtime_data_root_param_idx = shader_refl_d3d12.nir_runtime_data_root_param_idx;
 	shader_info_in.pipeline_type = shader_refl.pipeline_type;
 
@@ -5017,6 +5020,9 @@ void RenderingDeviceDriverD3D12::command_bind_render_pipeline(CommandBufferID p_
 	const ShaderInfo *shader_info_in = pipeline_info->shader_info;
 	const RenderPipelineInfo &render_info = pipeline_info->render_info;
 
+#ifdef UWP_ENABLED
+	cmd_buf_info->bound_shader_name = shader_info_in->name.get_data();
+#endif
 	if (cmd_buf_info->graphics_pso != pipeline_info->pso.Get()) {
 		cmd_buf_info->cmd_list->SetPipelineState(pipeline_info->pso.Get());
 
@@ -5102,12 +5108,18 @@ void RenderingDeviceDriverD3D12::command_bind_render_uniform_sets(CommandBufferI
 void RenderingDeviceDriverD3D12::command_render_draw(CommandBufferID p_cmd_buffer, uint32_t p_vertex_count, uint32_t p_instance_count, uint32_t p_base_vertex, uint32_t p_first_instance) {
 	CommandBufferInfo *cmd_buf_info = (CommandBufferInfo *)p_cmd_buffer.id;
 	_bind_vertex_buffers(cmd_buf_info);
+#ifdef UWP_ENABLED
+	_draw_crumb(cmd_buf_info, p_vertex_count, p_instance_count);
+#endif
 	cmd_buf_info->cmd_list->DrawInstanced(p_vertex_count, p_instance_count, p_base_vertex, p_first_instance);
 }
 
 void RenderingDeviceDriverD3D12::command_render_draw_indexed(CommandBufferID p_cmd_buffer, uint32_t p_index_count, uint32_t p_instance_count, uint32_t p_first_index, int32_t p_vertex_offset, uint32_t p_first_instance) {
 	CommandBufferInfo *cmd_buf_info = (CommandBufferInfo *)p_cmd_buffer.id;
 	_bind_vertex_buffers(cmd_buf_info);
+#ifdef UWP_ENABLED
+	_draw_crumb(cmd_buf_info, p_index_count, p_instance_count);
+#endif
 	cmd_buf_info->cmd_list->DrawIndexedInstanced(p_index_count, p_instance_count, p_first_index, p_vertex_offset, p_first_instance);
 }
 
@@ -5906,6 +5918,27 @@ void RenderingDeviceDriverD3D12::command_insert_breadcrumb(CommandBufferID p_cmd
 }
 
 #ifdef UWP_ENABLED
+// Each draw numbered by the GPU too (slots 2 and 3), and remembered here with its shader and sizes.
+void RenderingDeviceDriverD3D12::_draw_crumb(const CommandBufferInfo *p_cmd_buf_info, uint32_t p_count, uint32_t p_instances) {
+	if (!breadcrumb_mapped) {
+		return;
+	}
+	ComPtr<ID3D12GraphicsCommandList2> cmd_list_2;
+	if (!SUCCEEDED(p_cmd_buf_info->cmd_list.As(&cmd_list_2))) {
+		return;
+	}
+	const uint32_t number = ++draw_crumb_count;
+	DrawCrumb &crumb = draw_crumb_log[number % 4096];
+	strncpy_s(crumb.shader, sizeof(crumb.shader), p_cmd_buf_info->bound_shader_name ? p_cmd_buf_info->bound_shader_name : "?", _TRUNCATE);
+	crumb.count = p_count;
+	crumb.instances = p_instances;
+	crumb.draw_list = breadcrumb_count;
+	const D3D12_GPU_VIRTUAL_ADDRESS address = breadcrumb_buffer->GetGPUVirtualAddress();
+	const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER writes[2] = { { address + 8, number }, { address + 12, number } };
+	const D3D12_WRITEBUFFERIMMEDIATE_MODE modes[2] = { D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_IN, D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_OUT };
+	cmd_list_2->WriteBufferImmediate(2, writes, modes);
+}
+
 void RenderingDeviceDriverD3D12::_initialize_breadcrumbs() {
 	D3D12_FEATURE_DATA_D3D12_OPTIONS3 options_3 = {};
 	if (!SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &options_3, sizeof(options_3))) ||
@@ -5938,6 +5971,16 @@ void RenderingDeviceDriverD3D12::_log_breadcrumbs() {
 		const String pass_name = pass < sizeof(passes) / sizeof(passes[0]) ? String(passes[pass]) : itos(pass);
 		ERR_PRINT(vformat("GPU breadcrumbs:   %d %s pass %s, detail %d", number,
 				number < finished_before ? "done   " : (number <= started ? "RUNNING" : "waiting"), pass_name, data & 0xffff));
+	}
+	const uint32_t draw_started = breadcrumb_mapped[2];
+	const uint32_t draw_finished_before = breadcrumb_mapped[3];
+	ERR_PRINT(vformat("GPU breadcrumbs: draw %d started, everything before %d finished (%d recorded).", draw_started, draw_finished_before, draw_crumb_count));
+	const uint32_t draw_from = MAX(draw_finished_before > 3 ? draw_finished_before - 3 : 1, draw_crumb_count > 4000 ? draw_crumb_count - 4000 : 1);
+	const uint32_t draw_to = MIN(draw_started + 3, draw_crumb_count);
+	for (uint32_t number = draw_from; number <= draw_to && number - draw_from < 40; number++) {
+		const DrawCrumb &crumb = draw_crumb_log[number % 4096];
+		ERR_PRINT(vformat("GPU breadcrumbs:   draw %d %s %s: %d vertices/indices x %d instances (draw list %d)", number,
+				number < draw_finished_before ? "done   " : (number <= draw_started ? "RUNNING" : "waiting"), crumb.shader, crumb.count, crumb.instances, crumb.draw_list));
 	}
 }
 #endif

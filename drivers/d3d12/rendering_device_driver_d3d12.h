@@ -435,8 +435,17 @@ private:
 	uint32_t *breadcrumb_mapped = nullptr;
 	uint32_t breadcrumb_count = 0;
 	uint32_t breadcrumb_log[1024] = {};
+	struct DrawCrumb {
+		char shader[56] = {};
+		uint32_t count = 0;
+		uint32_t instances = 0;
+		uint32_t draw_list = 0;
+	};
+	uint32_t draw_crumb_count = 0;
+	DrawCrumb draw_crumb_log[4096];
 	void _initialize_breadcrumbs();
 	void _log_breadcrumbs();
+	void _draw_crumb(const CommandBufferInfo *p_cmd_buf_info, uint32_t p_count, uint32_t p_instances);
 #endif
 
 	struct CommandQueueInfo {
@@ -513,6 +522,9 @@ private:
 
 		Microsoft::WRL::ComPtr<ID3D12CommandAllocator> cmd_allocator;
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> cmd_list;
+#ifdef UWP_ENABLED
+		const char *bound_shader_name = nullptr; // For the GPU breadcrumbs of each draw.
+#endif
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList1> cmd_list_1;
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList5> cmd_list_5;
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList7> cmd_list_7;
@@ -668,6 +680,9 @@ private:
 		HashMap<ShaderStage, Vector<uint8_t>> stages_bytecode;
 
 		Microsoft::WRL::ComPtr<ID3D12RootSignature> root_signature;
+#ifdef UWP_ENABLED
+		CharString name;
+#endif
 		Microsoft::WRL::ComPtr<ID3D12RootSignatureDeserializer> root_signature_deserializer;
 		const D3D12_ROOT_SIGNATURE_DESC *root_signature_desc = nullptr; // Owned by the deserializer.
 		uint32_t root_signature_crc = 0;
