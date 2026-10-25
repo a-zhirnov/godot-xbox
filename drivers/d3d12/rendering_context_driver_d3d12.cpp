@@ -32,7 +32,6 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
-#include "core/os/os.h"
 #include "core/string/ustring.h"
 #include "core/templates/local_vector.h"
 
@@ -165,27 +164,6 @@ Error RenderingContextDriverD3D12::_initialize_debug_layers() {
 	return OK;
 }
 
-#ifdef UWP_ENABLED
-// Before the device exists: breadcrumbs for every command list and page fault records, read by
-// RenderingDeviceDriverD3D12 when a frame never finishes on the GPU.
-void RenderingContextDriverD3D12::_initialize_dred() {
-	PFN_D3D12_GET_DEBUG_INTERFACE d3d_D3D12GetDebugInterface = (PFN_D3D12_GET_DEBUG_INTERFACE)(void *)GetProcAddress(lib_d3d12, "D3D12GetDebugInterface");
-	ComPtr<ID3D12DeviceRemovedExtendedDataSettings> dred_settings;
-	if (!d3d_D3D12GetDebugInterface || !SUCCEEDED(d3d_D3D12GetDebugInterface(IID_PPV_ARGS(&dred_settings)))) {
-		WARN_PRINT("D3D12: DRED not available.");
-		return;
-	}
-	dred_settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
-	dred_settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
-	ComPtr<ID3D12DeviceRemovedExtendedDataSettings1> dred_settings_1;
-	if (SUCCEEDED(dred_settings.As(&dred_settings_1))) {
-		dred_settings_1->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
-	}
-	dred_enabled = true;
-	print_line("D3D12: DRED on");
-}
-#endif
-
 Error RenderingContextDriverD3D12::_create_dxgi_factory() {
 	const UINT dxgi_factory_flags = use_validation_layers() ? DXGI_CREATE_FACTORY_DEBUG : 0;
 
@@ -273,12 +251,6 @@ Error RenderingContextDriverD3D12::initialize() {
 		err = _initialize_debug_layers();
 		ERR_FAIL_COND_V(err != OK, ERR_CANT_CREATE);
 	}
-
-#ifdef UWP_ENABLED
-	if (OS::get_singleton()->has_environment("GODOT_D3D12_DRED")) {
-		_initialize_dred();
-	}
-#endif
 
 	err = _initialize_devices();
 	ERR_FAIL_COND_V(err != OK, ERR_CANT_CREATE);
