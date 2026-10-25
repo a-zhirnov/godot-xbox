@@ -427,6 +427,18 @@ private:
 private:
 	// ----- QUEUE -----
 
+#ifdef UWP_ENABLED
+	// GPU breadcrumbs (LocalState\gpu_breadcrumbs.txt saying on): the GPU writes the number of each draw
+	// list it starts (marker in) and of each one all work before which has finished (marker out) to a
+	// buffer the CPU reads any time; a frame that never finishes then says where the GPU is.
+	Microsoft::WRL::ComPtr<ID3D12Resource> breadcrumb_buffer;
+	uint32_t *breadcrumb_mapped = nullptr;
+	uint32_t breadcrumb_count = 0;
+	uint32_t breadcrumb_log[1024] = {};
+	void _initialize_breadcrumbs();
+	void _log_breadcrumbs();
+#endif
+
 	struct CommandQueueInfo {
 		Microsoft::WRL::ComPtr<ID3D12CommandQueue> d3d_queue;
 #ifdef UWP_ENABLED

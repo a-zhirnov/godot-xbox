@@ -1166,7 +1166,7 @@ void RenderingDeviceGraph::_run_render_commands(int32_t p_level, const RecordedC
 				}
 
 				const VectorView clear_values(draw_list_command->clear_values(), draw_list_command->clear_values_count);
-#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED)
+#if defined(DEBUG_ENABLED) || defined(DEV_ENABLED) || defined(UWP_ENABLED)
 				driver->command_insert_breadcrumb(r_command_buffer, draw_list_command->breadcrumb);
 #endif
 				RDD::RenderPassID render_pass;

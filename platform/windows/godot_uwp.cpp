@@ -376,6 +376,11 @@ static int godot_uwp_main() {
 	};
 	// <LocalState>\gpu_validation.txt (put there through Device Portal): D3D12 debug layer for this
 	// run - PCSX2 then logs what the runtime objects to in its command lists.
+	if (read_local_flag(L"gpu_breadcrumbs.txt") == "on") {
+		// The D3D12 driver reads it: where the GPU is, logged when a frame never finishes.
+		SetEnvironmentVariableW(L"GODOT_D3D12_BREADCRUMBS", L"1");
+		boot_log("GPU breadcrumbs requested");
+	}
 	if (read_local_flag(L"gpu_validation.txt") == "on") {
 		args_storage.push_back("--gpu-validation");
 		boot_log("GPU validation requested");

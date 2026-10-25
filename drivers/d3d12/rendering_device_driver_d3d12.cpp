@@ -2423,6 +2423,9 @@ Error RenderingDeviceDriverD3D12::fence_wait(FenceID p_fence) {
 	if (res == WAIT_TIMEOUT) {
 		ERR_PRINT(vformat("D3D12: fence wait over 3 s: waiting for %d, GPU at %d, device %s.", (int64_t)fence->fence_value,
 				(int64_t)fence->d3d_fence->GetCompletedValue(), vformat("0x%08ux", (uint64_t)device->GetDeviceRemovedReason())));
+		if (breadcrumb_mapped) {
+			_log_breadcrumbs();
+		}
 		res = WaitForSingleObjectEx(fence->event_handle, INFINITE, FALSE);
 	}
 #else
@@ -5883,8 +5886,61 @@ void RenderingDeviceDriverD3D12::command_end_label(CommandBufferID p_cmd_buffer)
 }
 
 void RenderingDeviceDriverD3D12::command_insert_breadcrumb(CommandBufferID p_cmd_buffer, uint32_t p_data) {
-	// TODO: Implement via DRED.
+#ifdef UWP_ENABLED
+	if (!breadcrumb_mapped) {
+		return;
+	}
+	const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_cmd_buffer.id;
+	ComPtr<ID3D12GraphicsCommandList2> cmd_list_2;
+	if (!SUCCEEDED(cmd_buf_info->cmd_list.As(&cmd_list_2))) {
+		return;
+	}
+	// Recorded in the order the GPU runs them (one queue), numbered from 1.
+	const uint32_t number = ++breadcrumb_count;
+	breadcrumb_log[number % 1024] = p_data;
+	const D3D12_GPU_VIRTUAL_ADDRESS address = breadcrumb_buffer->GetGPUVirtualAddress();
+	const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER writes[2] = { { address, number }, { address + 4, number } };
+	const D3D12_WRITEBUFFERIMMEDIATE_MODE modes[2] = { D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_IN, D3D12_WRITEBUFFERIMMEDIATE_MODE_MARKER_OUT };
+	cmd_list_2->WriteBufferImmediate(2, writes, modes);
+#endif
 }
+
+#ifdef UWP_ENABLED
+void RenderingDeviceDriverD3D12::_initialize_breadcrumbs() {
+	D3D12_FEATURE_DATA_D3D12_OPTIONS3 options_3 = {};
+	if (!SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &options_3, sizeof(options_3))) ||
+			!(options_3.WriteBufferImmediateSupportFlags & D3D12_COMMAND_LIST_SUPPORT_FLAG_DIRECT)) {
+		WARN_PRINT("D3D12: no WriteBufferImmediate on the direct queue, no GPU breadcrumbs.");
+		return;
+	}
+	const D3D12_HEAP_PROPERTIES heap = { D3D12_HEAP_TYPE_READBACK };
+	const D3D12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Buffer(256);
+	HRESULT res = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(breadcrumb_buffer.GetAddressOf()));
+	ERR_FAIL_COND_MSG(!SUCCEEDED(res), "D3D12: no buffer for GPU breadcrumbs.");
+	res = breadcrumb_buffer->Map(0, nullptr, (void **)&breadcrumb_mapped);
+	ERR_FAIL_COND_MSG(!SUCCEEDED(res), "D3D12: the GPU breadcrumb buffer can't be mapped.");
+	print_line("D3D12: GPU breadcrumbs on");
+}
+
+// Where the GPU is in a frame that doesn't finish: the draw lists after the last one all earlier work
+// finished before, up to the last one it started.
+void RenderingDeviceDriverD3D12::_log_breadcrumbs() {
+	static const char *passes[] = { "none", "reflection probes", "sky", "lightmapper", "directional shadow",
+		"cube shadow", "opaque", "alpha", "transparent", "post-processing", "blit", "UI", "debug" };
+	const uint32_t started = breadcrumb_mapped[0];
+	const uint32_t finished_before = breadcrumb_mapped[1];
+	ERR_PRINT(vformat("GPU breadcrumbs: draw list %d started, everything before %d finished (%d recorded).", started, finished_before, breadcrumb_count));
+	const uint32_t from = MAX(finished_before > 2 ? finished_before - 2 : 1, breadcrumb_count > 1000 ? breadcrumb_count - 1000 : 1);
+	const uint32_t to = MIN(started + 3, breadcrumb_count);
+	for (uint32_t number = from; number <= to && number - from < 40; number++) {
+		const uint32_t data = breadcrumb_log[number % 1024];
+		const uint32_t pass = data >> 16;
+		const String pass_name = pass < sizeof(passes) / sizeof(passes[0]) ? String(passes[pass]) : itos(pass);
+		ERR_PRINT(vformat("GPU breadcrumbs:   %d %s pass %s, detail %d", number,
+				number < finished_before ? "done   " : (number <= started ? "RUNNING" : "waiting"), pass_name, data & 0xffff));
+	}
+}
+#endif
 
 /********************/
 /**** SUBMISSION ****/
@@ -6642,6 +6698,12 @@ Error RenderingDeviceDriverD3D12::initialize(uint32_t p_device_index, uint32_t p
 
 	err = _initialize_command_signatures();
 	ERR_FAIL_COND_V(err != OK, ERR_CANT_CREATE);
+
+#ifdef UWP_ENABLED
+	if (OS::get_singleton()->has_environment("GODOT_D3D12_BREADCRUMBS")) {
+		_initialize_breadcrumbs();
+	}
+#endif
 
 	return OK;
 }
