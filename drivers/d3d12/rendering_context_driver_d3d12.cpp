@@ -32,6 +32,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/os/os.h"
 #include "core/string/ustring.h"
 #include "core/templates/local_vector.h"
 
@@ -161,6 +162,15 @@ Error RenderingContextDriverD3D12::_initialize_debug_layers() {
 	ERR_FAIL_COND_V(!SUCCEEDED(res), ERR_QUERY_FAILED);
 	debug_controller->EnableDebugLayer();
 	print_line("D3D12: debug layer on");
+#ifdef UWP_ENABLED
+	// GPU-based validation (GODOT_D3D12_GBV): the GPU checks every descriptor and resource state it uses
+	// as it draws, which catches a descriptor left pointing at a resource that is gone.
+	ComPtr<ID3D12Debug1> debug_controller_1;
+	if (OS::get_singleton()->has_environment("GODOT_D3D12_GBV") && SUCCEEDED(debug_controller.As(&debug_controller_1))) {
+		debug_controller_1->SetEnableGPUBasedValidation(TRUE);
+		print_line("D3D12: GPU-based validation on");
+	}
+#endif
 	return OK;
 }
 

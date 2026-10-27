@@ -381,9 +381,15 @@ static int godot_uwp_main() {
 		SetEnvironmentVariableW(L"GODOT_D3D12_BREADCRUMBS", L"1");
 		boot_log("GPU breadcrumbs requested");
 	}
-	if (read_local_flag(L"gpu_validation.txt") == "on") {
+	const std::string gpu_validation = read_local_flag(L"gpu_validation.txt");
+	if (gpu_validation == "on" || gpu_validation == "gbv") {
 		args_storage.push_back("--gpu-validation");
 		boot_log("GPU validation requested");
+	}
+	if (gpu_validation == "gbv") {
+		// The D3D12 context reads it: the GPU validates what each draw uses.
+		SetEnvironmentVariableW(L"GODOT_D3D12_GBV", L"1");
+		boot_log("GPU-based validation requested");
 	}
 	std::vector<char *> argv;
 	for (std::string &arg : args_storage) {
