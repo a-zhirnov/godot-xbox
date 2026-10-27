@@ -48,11 +48,14 @@ class SwitchCore : public RefCounted {
 		int64_t uptime_ms;
 		int32_t running;
 		int32_t guest_markers;
+		int64_t frames_processed;
+		int64_t frames_presented;
 	};
 
 	void *library = nullptr;
 	int (*xbc_init)(const char *) = nullptr;
 	int (*xbc_load)(const char *, int) = nullptr;
+	int (*xbc_install_firmware)(const char *) = nullptr;
 	void (*xbc_get_stats)(Stats *) = nullptr;
 	int (*xbc_read_log)(char *, int) = nullptr;
 	void (*xbc_debug_dump)() = nullptr;
@@ -68,6 +71,8 @@ public:
 	int init(const String &p_base_dir);
 	// p_memory_mode: 0 software page table, 1 host mapped, 2 host mapped unsafe.
 	int load_program(const String &p_path, int p_memory_mode);
+	// The system firmware from a dump of the user's own Switch (.zip or folder); 0 on success.
+	int install_firmware(const String &p_path);
 	Dictionary get_stats();
 	String read_log();
 	void debug_dump();

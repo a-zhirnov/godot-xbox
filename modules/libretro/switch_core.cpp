@@ -57,6 +57,7 @@ Error SwitchCore::load_library(const String &p_path) {
 	LOAD_XBC(xbc_read_log);
 	LOAD_XBC(xbc_debug_dump);
 	LOAD_XBC(xbc_shutdown);
+	LOAD_XBC(xbc_install_firmware);
 	return OK;
 }
 
@@ -70,6 +71,11 @@ int SwitchCore::load_program(const String &p_path, int p_memory_mode) {
 	const int result = xbc_load(p_path.utf8().get_data(), p_memory_mode);
 	started = started || result == 0;
 	return result;
+}
+
+int SwitchCore::install_firmware(const String &p_path) {
+	ERR_FAIL_NULL_V_MSG(xbc_install_firmware, -100, "Load the Switch core first.");
+	return xbc_install_firmware(p_path.utf8().get_data());
 }
 
 Dictionary SwitchCore::get_stats() {
@@ -86,6 +92,8 @@ Dictionary SwitchCore::get_stats() {
 	d["uptime_ms"] = s.uptime_ms;
 	d["running"] = s.running != 0;
 	d["guest_markers"] = s.guest_markers;
+	d["frames_processed"] = s.frames_processed;
+	d["frames_presented"] = s.frames_presented;
 	return d;
 }
 
@@ -122,6 +130,7 @@ void SwitchCore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("load_library", "path"), &SwitchCore::load_library);
 	ClassDB::bind_method(D_METHOD("init", "base_dir"), &SwitchCore::init);
 	ClassDB::bind_method(D_METHOD("load_program", "path", "memory_mode"), &SwitchCore::load_program);
+	ClassDB::bind_method(D_METHOD("install_firmware", "path"), &SwitchCore::install_firmware);
 	ClassDB::bind_method(D_METHOD("get_stats"), &SwitchCore::get_stats);
 	ClassDB::bind_method(D_METHOD("read_log"), &SwitchCore::read_log);
 	ClassDB::bind_method(D_METHOD("debug_dump"), &SwitchCore::debug_dump);
